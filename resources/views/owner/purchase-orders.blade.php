@@ -510,33 +510,66 @@
                                 <td>
                                     <div class="actions">
 
-                                        <button type="button" class="btn btn-sm btn-secondary" onclick="viewPurchaseOrder({{ $purchaseOrder->id }})">View</button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-secondary"
+                                                onclick="viewPurchaseOrder({{ $purchaseOrder->id }})">
+                                            View
+                                        </button>
 
-                                        @if($purchaseOrder->status === 'pending')
-
-                                            <button type="button" class="btn btn-sm btn-success" onclick="openDecisionModal({{ $purchaseOrder->id }}, 'approve')">Approve</button>
-
-                                            <button type="button" class="btn btn-sm btn-danger" onclick="openDecisionModal({{ $purchaseOrder->id }}, 'cancel')">Cancel</button>
-
-                                        @elseif($purchaseOrder->status === 'draft')
+                                        @if($purchaseOrder->status === 'draft')
 
                                             <span class="secondary-text">Draft</span>
 
+                                            <button type="button"
+                                                    class="btn btn-sm btn-primary"
+                                                    onclick="submitDraftPurchaseOrder({{ $purchaseOrder->id }})">
+                                                Submit for Approval
+                                            </button>
+
+                                            <button type="button"
+                                                    class="btn btn-sm btn-danger"
+                                                    onclick="openDecisionModal({{ $purchaseOrder->id }}, 'cancel')">
+                                                Cancel
+                                            </button>
+
+                                        @elseif($purchaseOrder->status === 'pending')
+
+                                            <button type="button"
+                                                    class="btn btn-sm btn-success"
+                                                    onclick="openDecisionModal({{ $purchaseOrder->id }}, 'approve')">
+                                                Approve
+                                            </button>
+
+                                            <button type="button"
+                                                    class="btn btn-sm btn-danger"
+                                                    onclick="openDecisionModal({{ $purchaseOrder->id }}, 'cancel')">
+                                                Cancel
+                                            </button>
+
                                         @elseif($purchaseOrder->status === 'approved')
 
-                                            <span class="secondary-text" style="color:#1e40af;">Waiting for supplier delivery</span>
+                                            <span class="secondary-text" style="color:#1e40af;">
+                                                Waiting for supplier delivery
+                                            </span>
 
                                         @elseif($purchaseOrder->status === 'partially_received')
 
-                                            <a href="{{ route('owner.inventory') }}" class="btn btn-sm btn-primary">Stock In</a>
+                                            <a href="{{ route('owner.inventory') }}"
+                                            class="btn btn-sm btn-primary">
+                                                Stock In
+                                            </a>
 
                                         @elseif($purchaseOrder->status === 'received')
 
-                                            <span class="secondary-text" style="color:#166534;">Completed</span>
+                                            <span class="secondary-text" style="color:#166534;">
+                                                Completed
+                                            </span>
 
                                         @elseif($purchaseOrder->status === 'cancelled')
 
-                                            <span class="secondary-text" style="color:#991b1b;">Cancelled</span>
+                                            <span class="secondary-text" style="color:#991b1b;">
+                                                Cancelled
+                                            </span>
 
                                         @endif
 
@@ -580,7 +613,7 @@
 
                 @csrf
 
-                <input type="hidden" name="status" value="pending">
+                <input type="hidden" name="status" id="createPOStatus" value="draft">
 
                 <div class="form-grid-three">
 
@@ -649,8 +682,23 @@
                 </div>
 
                 <div class="form-actions">
-                    <button type="button" class="btn btn-cancel" onclick="closeModal('createPurchaseOrderModal')">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Purchase Order</button>
+                    <button type="button"
+                            class="btn btn-cancel"
+                            onclick="closeModal('createPurchaseOrderModal')">
+                        Cancel
+                    </button>
+
+                    <button type="submit"
+                            class="btn btn-secondary"
+                            onclick="document.getElementById('createPOStatus').value='draft';">
+                        Save as Draft
+                    </button>
+
+                    <button type="submit"
+                            class="btn btn-primary"
+                            onclick="document.getElementById('createPOStatus').value='pending';">
+                        Submit for Approval
+                    </button>
                 </div>
 
             </form>
@@ -911,6 +959,50 @@
         updatePurchaseRowSubtotal(unitCostInput);
     }
 
+    function submitDraftPurchaseOrder(purchaseOrderId)
+    {
+        const purchaseOrder = purchaseOrders.find(function (order) {
+            return Number(order.id) === Number(purchaseOrderId);
+        });
+
+        if (!purchaseOrder) return;
+
+        if (purchaseOrder.status !== 'draft') {
+            alert('Only Draft Purchase Orders can be submitted for approval.');
+            return;
+        }
+
+        if (!confirm(
+            'Submit ' + purchaseOrder.po_number +
+            ' for Owner approval?'
+        )) {
+            return;
+        }
+
+        const form = document.createElement('form');
+
+        form.method = 'POST';
+        form.action =
+            "{{ url('/owner/purchase-orders') }}/" +
+            purchaseOrder.id +
+            "/submit";
+
+        const csrf = document.createElement('input');
+        csrf.type = 'hidden';
+        csrf.name = '_token';
+        csrf.value = "{{ csrf_token() }}";
+
+        const method = document.createElement('input');
+        method.type = 'hidden';
+        method.name = '_method';
+        method.value = 'PATCH';
+
+        form.appendChild(csrf);
+        form.appendChild(method);
+
+        document.body.appendChild(form);
+        form.submit();
+    }
 
     /* SUBTOTAL */
     function updatePurchaseRowSubtotal(input)

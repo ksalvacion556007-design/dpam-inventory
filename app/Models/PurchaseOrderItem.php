@@ -13,12 +13,14 @@ class PurchaseOrderItem extends Model
         'purchase_order_id',
         'product_id',
         'quantity',
+        'received_quantity',
         'unit_cost',
         'subtotal',
     ];
 
     protected $casts = [
         'quantity' => 'integer',
+        'received_quantity' => 'integer',
         'unit_cost' => 'decimal:2',
         'subtotal' => 'decimal:2',
     ];

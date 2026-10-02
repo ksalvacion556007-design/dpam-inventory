@@ -451,6 +451,11 @@ Route::middleware('auth')->group(function () {
         [PurchaseOrderController::class, 'store']
     )->name('owner.purchase-orders.store');
 
+    Route::patch(
+        '/owner/purchase-orders/{purchaseOrder}/submit',
+        [PurchaseOrderController::class, 'submit']
+    )->name('owner.purchase-orders.submit');
+
     Route::get(
         '/owner/purchase-orders/{purchaseOrder}',
         [PurchaseOrderController::class, 'show']
@@ -470,11 +475,6 @@ Route::middleware('auth')->group(function () {
         '/owner/purchase-orders/{purchaseOrder}/cancel',
         [PurchaseOrderController::class, 'cancel']
     )->name('owner.purchase-orders.cancel');
-
-    Route::patch(
-        '/owner/purchase-orders/{purchaseOrder}/received',
-        [PurchaseOrderController::class, 'markReceived']
-    )->name('owner.purchase-orders.received');
 
 
     /*

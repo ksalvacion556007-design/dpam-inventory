@@ -21,6 +21,11 @@ class CustomerOrderSeeder extends Seeder
             ->pluck('id', 'product_name');
 
         $orders = [
+            /*
+            |--------------------------------------------------------------------------
+            | 1. CONFIRMED
+            |--------------------------------------------------------------------------
+            */
             [
                 'number' => 'CO-2026-0001',
                 'customer' => 'ABC Construction Supply',
@@ -34,6 +39,12 @@ class CustomerOrderSeeder extends Seeder
                 'reserved' => 20,
                 'fulfilled' => 0,
             ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | 2. PARTIALLY FULFILLED
+            |--------------------------------------------------------------------------
+            */
             [
                 'number' => 'CO-2026-0002',
                 'customer' => 'Davao Equipment Services',
@@ -47,12 +58,20 @@ class CustomerOrderSeeder extends Seeder
                 'reserved' => 10,
                 'fulfilled' => 20,
             ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | 3. CONFIRMED
+            |--------------------------------------------------------------------------
+            | This replaces the old ready_for_delivery status.
+            |--------------------------------------------------------------------------
+            */
             [
                 'number' => 'CO-2026-0003',
                 'customer' => 'Southern Hardware Trading',
                 'contact' => '09170000003',
                 'date' => '2026-09-08',
-                'status' => 'ready_for_delivery',
+                'status' => 'confirmed',
                 'check' => 'available',
                 'decision' => 'confirmed',
                 'product' => 'Caltex Delo Gold',
@@ -60,6 +79,12 @@ class CustomerOrderSeeder extends Seeder
                 'reserved' => 15,
                 'fulfilled' => 0,
             ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | 4. FULFILLED
+            |--------------------------------------------------------------------------
+            */
             [
                 'number' => 'CO-2026-0004',
                 'customer' => 'Mindanao Fleet Services',
@@ -73,6 +98,12 @@ class CustomerOrderSeeder extends Seeder
                 'reserved' => 0,
                 'fulfilled' => 25,
             ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | 5. PENDING INVENTORY CHECK
+            |--------------------------------------------------------------------------
+            */
             [
                 'number' => 'CO-2026-0005',
                 'customer' => 'Davao Industrial Works',
@@ -86,6 +117,12 @@ class CustomerOrderSeeder extends Seeder
                 'reserved' => 0,
                 'fulfilled' => 0,
             ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | 6. CANCELLED
+            |--------------------------------------------------------------------------
+            */
             [
                 'number' => 'CO-2026-0006',
                 'customer' => 'Eastern Transport Services',
@@ -103,48 +140,105 @@ class CustomerOrderSeeder extends Seeder
 
         foreach ($orders as $order) {
 
+            /*
+            |--------------------------------------------------------------------------
+            | Verify Product Exists
+            |--------------------------------------------------------------------------
+            */
+            if (!isset($products[$order['product']])) {
+                throw new \RuntimeException(
+                    "Product '{$order['product']}' was not found in the products table."
+                );
+            }
+
+            $productId = $products[$order['product']];
+
+            /*
+            |--------------------------------------------------------------------------
+            | Inventory Check Date
+            |--------------------------------------------------------------------------
+            */
             $checkedAt = $order['check'] === 'pending'
                 ? null
                 : now()->subDays(5);
 
-            $orderId = DB::table('customer_orders')->insertGetId([
-                'order_number' => $order['number'],
-                'customer_name' => $order['customer'],
-                'customer_contact' => $order['contact'],
-                'order_date' => $order['date'],
-                'status' => $order['status'],
-                'inventory_check_status' => $order['check'],
-                'inventory_checked_by' => $order['check'] === 'pending'
-                    ? null
-                    : $secretary,
-                'inventory_checked_at' => $checkedAt,
-                'inventory_check_notes' => $order['check'] === 'available'
-                    ? 'Product availability checked.'
-                    : ($order['check'] === 'insufficient'
-                        ? 'Insufficient stock based on inventory check.'
-                        : null),
-                'owner_decision' => $order['decision'],
-                'notes' => null,
-                'user_id' => $owner,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-
-            $productId = $products[$order['product']];
-
+            /*
+            |--------------------------------------------------------------------------
+            | Product Unit Price
+            |--------------------------------------------------------------------------
+            */
             $unitPrice = DB::table('products')
                 ->where('id', $productId)
                 ->value('unit_price');
 
+            /*
+            |--------------------------------------------------------------------------
+            | Create Customer Order
+            |--------------------------------------------------------------------------
+            */
+            $orderId = DB::table('customer_orders')->insertGetId([
+                'order_number' => $order['number'],
+
+                'customer_name' => $order['customer'],
+
+                'customer_contact' => $order['contact'],
+
+                'order_date' => $order['date'],
+
+                'status' => $order['status'],
+
+                'inventory_check_status' => $order['check'],
+
+                'inventory_checked_by' =>
+                    $order['check'] === 'pending'
+                        ? null
+                        : $secretary,
+
+                'inventory_checked_at' => $checkedAt,
+
+                'inventory_check_notes' =>
+                    $order['check'] === 'available'
+                        ? 'Product availability checked by the Secretary.'
+                        : (
+                            $order['check'] === 'insufficient'
+                                ? 'Insufficient stock based on inventory check.'
+                                : null
+                        ),
+
+                'owner_decision' => $order['decision'],
+
+                'notes' => null,
+
+                'user_id' => $owner,
+
+                'created_at' => now(),
+
+                'updated_at' => now(),
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Create Customer Order Item
+            |--------------------------------------------------------------------------
+            */
             DB::table('customer_order_items')->insert([
                 'customer_order_id' => $orderId,
+
                 'product_id' => $productId,
+
                 'quantity' => $order['quantity'],
+
                 'reserved_quantity' => $order['reserved'],
+
                 'fulfilled_quantity' => $order['fulfilled'],
+
                 'unit_price' => $unitPrice,
-                'subtotal' => $order['quantity'] * $unitPrice,
+
+                'subtotal' =>
+                    $order['quantity'] * $unitPrice,
+
                 'created_at' => now(),
+
                 'updated_at' => now(),
             ]);
         }

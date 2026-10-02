@@ -191,21 +191,6 @@ class CustomerOrderController extends Controller
             );
     }
 
-    /*
-     * Owner decides what to do after inventory checking.
-     *
-     * IMPORTANT:
-     *
-     * confirmed:
-     *     reserves/commits the requested quantity
-     *     BUT does NOT deduct physical inventory.
-     *
-     * for_purchasing:
-     *     does NOT reserve insufficient quantity.
-     *
-     * cancelled:
-     *     releases any reservation belonging to the order.
-     */
     public function ownerDecision(
         Request $request,
         CustomerOrder $customerOrder
@@ -224,7 +209,12 @@ class CustomerOrderController extends Controller
         if (
             in_array(
                 $customerOrder->status,
-                ['fulfilled', 'cancelled'],
+                [
+                    'confirmed',
+                    'partially_fulfilled',
+                    'fulfilled',
+                    'cancelled',
+                ],
                 true
             )
         ) {
@@ -287,10 +277,10 @@ class CustomerOrderController extends Controller
                                 "No inventory record exists for {$item->product->product_name}.",
                         ];
                     }
-
+                    
                     /*
-                     * Lock the physical inventory record.
-                     */
+                    * Lock the inventory record to prevent conflicting stock reservations.
+                    */
                     $lockedInventory = $inventory
                         ->newQuery()
                         ->where('id', $inventory->id)
@@ -337,7 +327,7 @@ class CustomerOrderController extends Controller
                         return [
                             'success' => false,
                             'message' =>
-                                "There is no longer enough available stock for {$item->product->product_name}. Physical stock: {$lockedInventory->current_stock}; already committed to other orders: {$alreadyReserved}; requested: {$item->quantity}.",
+                                "There is no longer enough available stock for {$item->product->product_name}. System stock: {$lockedInventory->current_stock}; already committed to other orders: {$alreadyReserved}; requested: {$item->quantity}." ,
                         ];
                     }
                 }

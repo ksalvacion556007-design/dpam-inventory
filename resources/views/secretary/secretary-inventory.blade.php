@@ -186,7 +186,7 @@
 
         {{-- ACTIONS --}}
         <div class="action-row">
-            <button type="button" class="btn btn-primary" onclick="openModal('stockInModal')">+ Stock In</button>
+            <button type="button" class="btn btn-primary" onclick="resetSecretaryStockInModal(); openModal('stockInModal')">+ Stock In</button>
             <button type="button" class="btn btn-danger" onclick="openModal('stockOutModal')">Stock Out</button>
             <button type="button" class="btn btn-ghost" onclick="openModal('adjustModal')">Adjust Stock</button>
         </div>
@@ -325,71 +325,239 @@
 
 </div>
 
-
 {{-- STOCK IN MODAL --}}
 <div class="modal" id="stockInModal">
     <div class="modal-box">
 
         <div class="modal-header">
             <h2>Stock In</h2>
-            <button type="button" class="close-button" onclick="closeModal('stockInModal')" aria-label="Close">&times;</button>
+
+            <button
+                type="button"
+                class="close-button"
+                onclick="closeModal('stockInModal')"
+                aria-label="Close"
+                &times;
+            >
+            </button>
         </div>
 
         <div class="modal-body">
 
-            <form action="{{ route('secretary.inventory.stock-in') }}" method="POST">
+            <form
+                action="{{ route('secretary.inventory.stock-in') }}"
+                method="POST"
+            >
 
                 @csrf
 
                 <div class="form-grid">
 
+                    {{-- TRANSACTION DATE --}}
+                    <div class="form-group">
+                        <label>
+                            Transaction Date
+                            <span class="req">*</span>
+                        </label>
+
+                        <input
+                            type="date"
+                            name="transaction_date"
+                            id="secretaryStockInDate"
+                            class="form-control"
+                            value="{{ old('transaction_date', date('Y-m-d')) }}"
+                            required
+                        >
+
+                        <small>
+                            Actual date the supplier delivery was received.
+                        </small>
+                    </div>
+
+
+                    {{-- PURCHASE ORDER --}}
                     <div class="form-group full">
-                        <label>Product <span class="req">*</span></label>
-                        <select name="product_id" class="form-control" required>
-                            <option value="">Select Product</option>
-                            @foreach($products as $product)
-                                <option value="{{ $product->id }}">
-                                    {{ $product->product_name }} - Current Stock: {{ $product->inventory?->current_stock ?? 0 }}
+                        <label>
+                            Purchase Order
+                            <span class="req">*</span>
+                        </label>
+
+                        <select
+                            name="purchase_order_id"
+                            id="secretaryStockInPurchaseOrder"
+                            class="form-control"
+                            required
+                            onchange="populateSecretaryStockInProducts(this.value)"
+                        >
+
+                            <option value="">
+                                Select Purchase Order
+                            </option>
+
+                            @foreach($purchaseOrders as $purchaseOrder)
+
+                                <option value="{{ $purchaseOrder->id }}">
+
+                                    {{ $purchaseOrder->po_number }}
+
+                                    —
+                                    {{ $purchaseOrder->supplier->supplier_name ?? 'No Supplier' }}
+
+                                    —
+                                    {{ ucfirst(str_replace('_', ' ', $purchaseOrder->status)) }}
+
                                 </option>
+
                             @endforeach
+
+                        </select>
+
+                        <small>
+                            Select an Approved or Partially Received Purchase Order.
+                        </small>
+                    </div>
+
+
+                    {{-- SUPPLIER --}}
+                    <div class="form-group">
+                        <label>Supplier</label>
+
+                        <input
+                            type="text"
+                            id="secretaryStockInSupplier"
+                            class="form-control"
+                            placeholder="Automatically filled from Purchase Order"
+                            readonly
+                        >
+                    </div>
+
+
+                    {{-- PRODUCT --}}
+                    <div class="form-group">
+                        <label>
+                            Product
+                            <span class="req">*</span>
+                        </label>
+
+                        <select
+                            name="product_id"
+                            id="secretaryStockInProduct"
+                            class="form-control"
+                            required
+                            disabled
+                            onchange="updateSecretaryStockInItem(this.value)"
+                        >
+
+                            <option value="">
+                                Select Purchase Order first
+                            </option>
+
                         </select>
                     </div>
 
+
+                    {{-- REMAINING QUANTITY --}}
                     <div class="form-group">
-                        <label>Transaction Date <span class="req">*</span></label>
-                        <input type="date" name="transaction_date" class="form-control" value="{{ date('Y-m-d') }}" required>
+                        <label>Remaining Quantity</label>
+
+                        <input
+                            type="text"
+                            id="secretaryStockInRemaining"
+                            class="form-control"
+                            value="—"
+                            readonly
+                        >
                     </div>
 
+
+                    {{-- QUANTITY --}}
                     <div class="form-group">
-                        <label>Quantity Received <span class="req">*</span></label>
-                        <input type="number" name="quantity" class="form-control" min="1" required>
+                        <label>
+                            Quantity Received
+                            <span class="req">*</span>
+                        </label>
+
+                        <input
+                            type="number"
+                            name="quantity"
+                            id="secretaryStockInQuantity"
+                            class="form-control"
+                            min="1"
+                            step="1"
+                            placeholder="Enter actual quantity received"
+                            required
+                            disabled
+                        >
+
+                        <small>
+                            Cannot exceed the remaining Purchase Order quantity.
+                        </small>
                     </div>
 
-                    <div class="form-group">
-                        <label>Supplier</label>
-                        <input type="text" name="supplier_customer" class="form-control" placeholder="Supplier name">
-                    </div>
 
+                    {{-- UNIT COST --}}
                     <div class="form-group">
                         <label>Unit Cost</label>
-                        <input type="number" name="unit_cost" class="form-control" min="0" step="0.01" placeholder="0.00">
+
+                        <input
+                            type="number"
+                            name="unit_cost"
+                            id="secretaryStockInUnitCost"
+                            class="form-control"
+                            min="0"
+                            step="0.01"
+                            placeholder="Uses PO cost if blank"
+                        >
                     </div>
 
+
+                    {{-- REASON --}}
                     <div class="form-group">
                         <label>Reason</label>
-                        <input type="text" name="reason" class="form-control" value="Supplier delivery">
+
+                        <input
+                            type="text"
+                            name="reason"
+                            class="form-control"
+                            value="{{ old('reason', 'Supplier delivery') }}"
+                        >
                     </div>
 
+
+                    {{-- PO REFERENCE --}}
                     <div class="form-group">
                         <label>Purchase Order Reference</label>
-                        <input type="text" name="reference" class="form-control" placeholder="Example: PO-2026-0001">
+
+                        <input
+                            type="text"
+                            name="reference"
+                            id="secretaryStockInReference"
+                            class="form-control"
+                            placeholder="Automatically filled from PO"
+                            readonly
+                        >
                     </div>
 
                 </div>
 
+
                 <div class="form-actions">
-                    <button type="button" class="btn btn-ghost" onclick="closeModal('stockInModal')">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Record Stock In</button>
+
+                    <button
+                        type="button"
+                        class="btn btn-ghost"
+                        onclick="closeModal('stockInModal')"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="submit"
+                        class="btn btn-primary"
+                    >
+                        Record Stock In
+                    </button>
+
                 </div>
 
             </form>
@@ -552,8 +720,437 @@
     </div>
 </div>
 
+@php
+    $purchaseOrderJavascriptData = collect($purchaseOrders ?? [])->map(function ($purchaseOrder) {
+
+        return [
+            'id' => $purchaseOrder->id,
+
+            'po_number' => $purchaseOrder->po_number,
+
+            'status' => $purchaseOrder->status,
+
+            'supplier' => [
+                'supplier_name' =>
+                    $purchaseOrder->supplier->supplier_name ?? null,
+            ],
+
+            'items' => $purchaseOrder->items->map(function ($item) {
+
+                $orderedQuantity =
+                    (int) $item->quantity;
+
+                $receivedQuantity =
+                    (int) ($item->received_quantity ?? 0);
+
+                $remainingQuantity =
+                    max(
+                        0,
+                        $orderedQuantity - $receivedQuantity
+                    );
+
+                return [
+                    'product_id' => $item->product_id,
+
+                    'product_name' =>
+                        $item->product->product_name
+                        ?? 'Unknown Product',
+
+                    'quantity' =>
+                        $orderedQuantity,
+
+                    'received_quantity' =>
+                        $receivedQuantity,
+
+                    'remaining_quantity' =>
+                        $remainingQuantity,
+
+                    'unit_cost' =>
+                        $item->unit_cost,
+                ];
+            })->values(),
+        ];
+
+    })->values();
+@endphp
 
 <script>
+
+    const secretaryPurchaseOrders = @js($purchaseOrderJavascriptData);
+
+
+    function populateSecretaryStockInProducts(purchaseOrderId)
+    {
+        const productSelect =
+            document.getElementById('secretaryStockInProduct');
+
+        const supplierInput =
+            document.getElementById('secretaryStockInSupplier');
+
+        const referenceInput =
+            document.getElementById('secretaryStockInReference');
+
+        const quantityInput =
+            document.getElementById('secretaryStockInQuantity');
+
+        const remainingInput =
+            document.getElementById('secretaryStockInRemaining');
+
+        const unitCostInput =
+            document.getElementById('secretaryStockInUnitCost');
+
+
+        if (!productSelect) return;
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | RESET PRODUCT
+        |--------------------------------------------------------------------------
+        */
+
+        productSelect.innerHTML =
+            '<option value="">Select Product</option>';
+
+        productSelect.disabled = true;
+
+
+        if (quantityInput) {
+
+            quantityInput.value = '';
+            quantityInput.max = '';
+            quantityInput.disabled = true;
+        }
+
+
+        if (remainingInput) {
+            remainingInput.value = '—';
+        }
+
+
+        if (unitCostInput) {
+            unitCostInput.value = '';
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | FIND PURCHASE ORDER
+        |--------------------------------------------------------------------------
+        */
+
+        const purchaseOrder =
+            secretaryPurchaseOrders.find(function (order) {
+
+                return Number(order.id) ===
+                    Number(purchaseOrderId);
+
+            });
+
+
+        if (!purchaseOrder) {
+
+            if (supplierInput) {
+                supplierInput.value = '';
+            }
+
+            if (referenceInput) {
+                referenceInput.value = '';
+            }
+
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | AUTOMATIC SUPPLIER
+        |--------------------------------------------------------------------------
+        */
+
+        if (supplierInput) {
+
+            supplierInput.value =
+                purchaseOrder.supplier?.supplier_name
+                ?? 'No Supplier';
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | AUTOMATIC PO REFERENCE
+        |--------------------------------------------------------------------------
+        */
+
+        if (referenceInput) {
+
+            referenceInput.value =
+                purchaseOrder.po_number ?? '';
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | PRODUCTS IN THIS PO
+        |--------------------------------------------------------------------------
+        */
+
+        let hasProducts = false;
+
+
+        (purchaseOrder.items ?? []).forEach(function (item) {
+
+            const remaining =
+                Number(item.remaining_quantity ?? 0);
+
+
+            /*
+            | Do not show fully received products.
+            */
+
+            if (remaining <= 0) {
+                return;
+            }
+
+
+            hasProducts = true;
+
+
+            const option =
+                document.createElement('option');
+
+
+            option.value =
+                item.product_id;
+
+
+            option.textContent =
+                `${item.product_name} — Remaining: ${remaining}`;
+
+
+            productSelect.appendChild(option);
+
+        });
+
+
+        if (!hasProducts) {
+
+            const option =
+                document.createElement('option');
+
+            option.value = '';
+
+            option.textContent =
+                'All products in this PO are fully received';
+
+            option.disabled = true;
+
+            productSelect.appendChild(option);
+
+            return;
+        }
+
+
+        productSelect.disabled = false;
+    }
+
+
+    function updateSecretaryStockInItem(productId)
+    {
+        const purchaseOrderSelect =
+            document.getElementById(
+                'secretaryStockInPurchaseOrder'
+            );
+
+        const quantityInput =
+            document.getElementById(
+                'secretaryStockInQuantity'
+            );
+
+        const remainingInput =
+            document.getElementById(
+                'secretaryStockInRemaining'
+            );
+
+        const unitCostInput =
+            document.getElementById(
+                'secretaryStockInUnitCost'
+            );
+
+
+        if (!purchaseOrderSelect) return;
+
+
+        const purchaseOrder =
+            secretaryPurchaseOrders.find(function (order) {
+
+                return Number(order.id) ===
+                    Number(purchaseOrderSelect.value);
+
+            });
+
+
+        if (!purchaseOrder) return;
+
+
+        const item =
+            (purchaseOrder.items ?? []).find(function (item) {
+
+                return Number(item.product_id) ===
+                    Number(productId);
+
+            });
+
+
+        if (!item) {
+
+            if (remainingInput) {
+                remainingInput.value = '—';
+            }
+
+            if (quantityInput) {
+                quantityInput.value = '';
+                quantityInput.max = '';
+                quantityInput.disabled = true;
+            }
+
+            if (unitCostInput) {
+                unitCostInput.value = '';
+            }
+
+            return;
+        }
+
+
+        const remaining =
+            Number(item.remaining_quantity ?? 0);
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SHOW REMAINING
+        |--------------------------------------------------------------------------
+        */
+
+        if (remainingInput) {
+
+            remainingInput.value =
+                remaining.toLocaleString();
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | LIMIT QUANTITY
+        |--------------------------------------------------------------------------
+        */
+
+        if (quantityInput) {
+
+            quantityInput.value = '';
+
+            quantityInput.min = 1;
+
+            quantityInput.max = remaining;
+
+            quantityInput.disabled =
+                remaining <= 0;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | DEFAULT UNIT COST FROM PO
+        |--------------------------------------------------------------------------
+        */
+
+        if (unitCostInput) {
+
+            unitCostInput.value =
+                item.unit_cost ?? '';
+        }
+    }
+
+
+    function resetSecretaryStockInModal()
+    {
+        const purchaseOrderSelect =
+            document.getElementById(
+                'secretaryStockInPurchaseOrder'
+            );
+
+        const productSelect =
+            document.getElementById(
+                'secretaryStockInProduct'
+            );
+
+        const supplierInput =
+            document.getElementById(
+                'secretaryStockInSupplier'
+            );
+
+        const referenceInput =
+            document.getElementById(
+                'secretaryStockInReference'
+            );
+
+        const quantityInput =
+            document.getElementById(
+                'secretaryStockInQuantity'
+            );
+
+        const remainingInput =
+            document.getElementById(
+                'secretaryStockInRemaining'
+            );
+
+        const unitCostInput =
+            document.getElementById(
+                'secretaryStockInUnitCost'
+            );
+
+
+        if (purchaseOrderSelect) {
+            purchaseOrderSelect.value = '';
+        }
+
+
+        if (productSelect) {
+
+            productSelect.innerHTML =
+                '<option value="">Select Purchase Order first</option>';
+
+            productSelect.disabled = true;
+        }
+
+
+        if (supplierInput) {
+            supplierInput.value = '';
+        }
+
+
+        if (referenceInput) {
+            referenceInput.value = '';
+        }
+
+
+        if (quantityInput) {
+
+            quantityInput.value = '';
+            quantityInput.max = '';
+            quantityInput.disabled = true;
+        }
+
+
+        if (remainingInput) {
+            remainingInput.value = '—';
+        }
+
+
+        if (unitCostInput) {
+            unitCostInput.value = '';
+        }
+    }
 
     function openModal(id)
     {

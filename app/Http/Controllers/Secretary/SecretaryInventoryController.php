@@ -7,9 +7,12 @@ use App\Models\CustomerOrder;
 use App\Models\CustomerOrderItem;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
+use App\Models\Payment;
 use App\Models\Product;
+use App\Models\PurchaseOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SecretaryInventoryController extends Controller
 {
@@ -18,10 +21,15 @@ class SecretaryInventoryController extends Controller
     | INVENTORY PAGE
     |--------------------------------------------------------------------------
     |
-    | Secretary can view:
-    | - Current inventory
-    | - Inventory movement history
-    | - Customer Orders eligible for Stock Out
+    | Secretary can:
+    | - View current inventory
+    | - View inventory movement history
+    | - Stock In actual supplier deliveries
+    | - Stock Out actual customer deliveries
+    | - Adjust physical stock
+    |
+    | Customer Orders do NOT reduce physical inventory.
+    | Purchase Orders do NOT increase physical inventory.
     |
     */
 
@@ -29,7 +37,7 @@ class SecretaryInventoryController extends Controller
     {
         /*
         |--------------------------------------------------------------------------
-        | PRODUCTS
+        | ACTIVE PRODUCTS
         |--------------------------------------------------------------------------
         */
 
@@ -62,12 +70,10 @@ class SecretaryInventoryController extends Controller
         | CUSTOMER ORDERS AVAILABLE FOR STOCK OUT
         |--------------------------------------------------------------------------
         |
-        | These are orders that have already been confirmed by the Owner
-        | or are already in the delivery/fulfillment process.
+        | Only confirmed or partially fulfilled orders are available.
         |
-        | The order itself does NOT reduce physical inventory.
-        |
-        | Physical inventory is reduced only when Stock Out is recorded.
+        | ready_for_delivery is intentionally NOT included because it is
+        | not part of the current Customer Order status flow.
         |
         */
 
@@ -76,17 +82,9 @@ class SecretaryInventoryController extends Controller
         ])
             ->whereIn('status', [
                 'confirmed',
-                'ready_for_delivery',
                 'partially_fulfilled',
             ])
             ->whereHas('items', function ($query) {
-
-                /*
-                |--------------------------------------------------------------------------
-                | Only show orders that still have an unfulfilled quantity.
-                |--------------------------------------------------------------------------
-                */
-
                 $query->whereColumn(
                     'fulfilled_quantity',
                     '<',
@@ -94,6 +92,66 @@ class SecretaryInventoryController extends Controller
                 );
             })
             ->orderByDesc('order_date')
+            ->orderByDesc('id')
+            ->get();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | RECEIPTS / PAYMENTS
+        |--------------------------------------------------------------------------
+        |
+        | Stock Out must be connected to an actual receipt created by
+        | the Cashier.
+        |
+        | Voided receipts are excluded.
+        |
+        */
+
+        $payments = Payment::with([
+            'customerOrder',
+        ])
+            ->whereNotIn('status', [
+                'voided',
+            ])
+            ->whereHas('customerOrder', function ($query) {
+                $query->whereIn('status', [
+                    'confirmed',
+                    'partially_fulfilled',
+                ]);
+            })
+            ->orderByDesc('payment_date')
+            ->orderByDesc('id')
+            ->get();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | PURCHASE ORDERS AVAILABLE FOR STOCK IN
+        |--------------------------------------------------------------------------
+        |
+        | Only Approved and Partially Received POs can receive stock.
+        |
+        | Draft / Pending:
+        | Not yet approved, therefore cannot receive stock.
+        |
+        | Received:
+        | Already completely received.
+        |
+        | Cancelled:
+        | Cannot receive stock.
+        |
+        */
+
+        $purchaseOrders = PurchaseOrder::with([
+            'supplier',
+            'items.product',
+        ])
+            ->whereIn('status', [
+                'approved',
+                'partially_received',
+            ])
+            ->orderByDesc('po_date')
             ->orderByDesc('id')
             ->get();
 
@@ -109,7 +167,9 @@ class SecretaryInventoryController extends Controller
             compact(
                 'products',
                 'movements',
-                'customerOrders'
+                'customerOrders',
+                'payments',
+                'purchaseOrders'
             )
         );
     }
@@ -120,18 +180,38 @@ class SecretaryInventoryController extends Controller
     | STOCK IN
     |--------------------------------------------------------------------------
     |
-    | Stock In is recorded only when the supplier actually delivers
-    | products to DPAM.
+    | Stock In happens only when the supplier actually delivers goods.
     |
-    | Creating or approving a Purchase Order does NOT increase stock.
+    | Flow:
+    |
+    | Purchase Order
+    |      ↓
+    | Approved
+    |      ↓
+    | Supplier delivers
+    |      ↓
+    | Secretary records Stock In
+    |      ↓
+    | Inventory increases
+    |      ↓
+    | PO received_quantity increases
+    |      ↓
+    | PO becomes Partially Received or Received
     |
     */
 
     public function stockIn(Request $request)
     {
         $validated = $request->validate([
+            'purchase_order_id' => [
+                'required',
+                'integer',
+                'exists:purchase_orders,id',
+            ],
+
             'product_id' => [
                 'required',
+                'integer',
                 'exists:products,id',
             ],
 
@@ -144,12 +224,6 @@ class SecretaryInventoryController extends Controller
                 'required',
                 'integer',
                 'min:1',
-            ],
-
-            'supplier_customer' => [
-                'nullable',
-                'string',
-                'max:255',
             ],
 
             'unit_cost' => [
@@ -176,13 +250,139 @@ class SecretaryInventoryController extends Controller
 
             /*
             |--------------------------------------------------------------------------
+            | LOCK PURCHASE ORDER
+            |--------------------------------------------------------------------------
+            */
+
+            $purchaseOrder = PurchaseOrder::with([
+                'supplier',
+                'items.product',
+            ])
+                ->lockForUpdate()
+                ->findOrFail(
+                    $validated['purchase_order_id']
+                );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | VERIFY PURCHASE ORDER STATUS
+            |--------------------------------------------------------------------------
+            */
+
+            if (!in_array(
+                $purchaseOrder->status,
+                [
+                    'approved',
+                    'partially_received',
+                ],
+                true
+            )) {
+                throw ValidationException::withMessages([
+                    'purchase_order_id' =>
+                        'Only Approved or Partially Received Purchase Orders can receive Stock In.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | FIND PRODUCT INSIDE PURCHASE ORDER
+            |--------------------------------------------------------------------------
+            */
+
+            $purchaseOrderItem = $purchaseOrder->items
+                ->firstWhere(
+                    'product_id',
+                    (int) $validated['product_id']
+                );
+
+
+            if (!$purchaseOrderItem) {
+                throw ValidationException::withMessages([
+                    'product_id' =>
+                        'The selected product is not included in the selected Purchase Order.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | CALCULATE REMAINING QUANTITY
+            |--------------------------------------------------------------------------
+            */
+
+            $orderedQuantity = (int) $purchaseOrderItem->quantity;
+
+            $receivedQuantity = (int) (
+                $purchaseOrderItem->received_quantity ?? 0
+            );
+
+            $remainingQuantity = max(
+                0,
+                $orderedQuantity - $receivedQuantity
+            );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | VERIFY THERE IS STILL STOCK TO RECEIVE
+            |--------------------------------------------------------------------------
+            */
+
+            if ($remainingQuantity <= 0) {
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        'This Purchase Order item has already been fully received.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | PREVENT OVER-RECEIVING
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                (int) $validated['quantity']
+                > $remainingQuantity
+            ) {
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        "Only {$remainingQuantity} unit(s) remain to be received for this Purchase Order item.",
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | GET PRODUCT
+            |--------------------------------------------------------------------------
+            */
+
+            $product = Product::findOrFail(
+                $validated['product_id']
+            );
+
+
+            if ($product->status === 'archived') {
+                throw ValidationException::withMessages([
+                    'product_id' =>
+                        'Archived products cannot receive stock.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
             | GET OR CREATE INVENTORY
             |--------------------------------------------------------------------------
             */
 
             $inventory = Inventory::firstOrCreate(
                 [
-                    'product_id' => $validated['product_id'],
+                    'product_id' => $product->id,
                 ],
                 [
                     'current_stock' => 0,
@@ -192,15 +392,31 @@ class SecretaryInventoryController extends Controller
 
             /*
             |--------------------------------------------------------------------------
+            | LOCK INVENTORY
+            |--------------------------------------------------------------------------
+            */
+
+            $inventory = Inventory::where(
+                'id',
+                $inventory->id
+            )
+                ->lockForUpdate()
+                ->first();
+
+
+            /*
+            |--------------------------------------------------------------------------
             | CALCULATE STOCK
             |--------------------------------------------------------------------------
             */
 
-            $stockBefore =
-                (int) $inventory->current_stock;
+            $stockBefore = (int) $inventory->current_stock;
+
+            $quantityReceived = (int) $validated['quantity'];
 
             $stockAfter =
-                $stockBefore + $validated['quantity'];
+                $stockBefore
+                + $quantityReceived;
 
 
             /*
@@ -216,13 +432,85 @@ class SecretaryInventoryController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | RECORD STOCK IN MOVEMENT
+            | UNIT COST
+            |--------------------------------------------------------------------------
+            |
+            | If Secretary leaves Unit Cost blank,
+            | use the Purchase Order unit cost.
+            |
+            */
+
+            $unitCost = $validated['unit_cost']
+                ?? $purchaseOrderItem->unit_cost;
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | CALCULATE AMOUNT
+            |--------------------------------------------------------------------------
+            */
+
+            $amount = $unitCost !== null
+                ? $quantityReceived * (float) $unitCost
+                : null;
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | UPDATE PO RECEIVED QUANTITY
+            |--------------------------------------------------------------------------
+            */
+
+            $newReceivedQuantity =
+                $receivedQuantity
+                + $quantityReceived;
+
+
+            $purchaseOrderItem->update([
+                'received_quantity' =>
+                    $newReceivedQuantity,
+            ]);
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | DETERMINE PURCHASE ORDER STATUS
+            |--------------------------------------------------------------------------
+            */
+
+            $allItemsFullyReceived =
+                $purchaseOrder->items()
+                    ->whereColumn(
+                        'received_quantity',
+                        '<',
+                        'quantity'
+                    )
+                    ->doesntExist();
+
+
+            if ($allItemsFullyReceived) {
+
+                $purchaseOrder->update([
+                    'status' => 'received',
+                ]);
+
+            } else {
+
+                $purchaseOrder->update([
+                    'status' => 'partially_received',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | CREATE STOCK CARD MOVEMENT
             |--------------------------------------------------------------------------
             */
 
             InventoryMovement::create([
                 'product_id' =>
-                    $validated['product_id'],
+                    $product->id,
 
                 'user_id' =>
                     auth()->id(),
@@ -234,7 +522,7 @@ class SecretaryInventoryController extends Controller
                     $validated['transaction_date'],
 
                 'quantity' =>
-                    $validated['quantity'],
+                    $quantityReceived,
 
                 'stock_before' =>
                     $stockBefore,
@@ -242,17 +530,25 @@ class SecretaryInventoryController extends Controller
                 'stock_after' =>
                     $stockAfter,
 
+                /*
+                |--------------------------------------------------------------------------
+                | Supplier comes from the Purchase Order.
+                |--------------------------------------------------------------------------
+                */
+
                 'supplier_customer' =>
-                    $validated['supplier_customer'] ?? null,
+                    optional(
+                        $purchaseOrder->supplier
+                    )->supplier_name,
 
                 'unit_cost' =>
-                    $validated['unit_cost'] ?? null,
+                    $unitCost,
 
                 'unit_price' =>
                     null,
 
                 'amount' =>
-                    null,
+                    $amount,
 
                 'reason' =>
                     $validated['reason']
@@ -267,8 +563,15 @@ class SecretaryInventoryController extends Controller
                 'received_by' =>
                     null,
 
+                /*
+                |--------------------------------------------------------------------------
+                | PO number becomes the default reference.
+                |--------------------------------------------------------------------------
+                */
+
                 'reference' =>
-                    $validated['reference'] ?? null,
+                    $validated['reference']
+                    ?? $purchaseOrder->po_number,
             ]);
         });
 
@@ -277,7 +580,7 @@ class SecretaryInventoryController extends Controller
             ->route('secretary.inventory')
             ->with(
                 'success',
-                'Stock In was recorded successfully.'
+                'Supplier delivery recorded. Inventory and Purchase Order receiving status have been updated successfully.'
             );
     }
 
@@ -287,22 +590,12 @@ class SecretaryInventoryController extends Controller
     | STOCK OUT
     |--------------------------------------------------------------------------
     |
-    | Stock Out is recorded when products are actually released/delivered
-    | to the customer and a receipt has been issued.
+    | Stock Out happens only when products are actually released to the
+    | customer.
     |
-    | Customer Order creation does NOT reduce physical inventory.
+    | Customer Order creation does NOT reduce inventory.
     |
-    | This method:
-    |
-    | 1. Verifies the Customer Order.
-    | 2. Verifies the selected product belongs to the order.
-    | 3. Checks the quantity still needed for the order.
-    | 4. Checks physical inventory.
-    | 5. Reduces physical inventory.
-    | 6. Increases fulfilled quantity.
-    | 7. Reduces reserved quantity.
-    | 8. Updates Customer Order status.
-    | 9. Creates Inventory Movement / Stock Card record.
+    | A real Cashier receipt must exist before Stock Out.
     |
     */
 
@@ -311,6 +604,7 @@ class SecretaryInventoryController extends Controller
         $validated = $request->validate([
             'product_id' => [
                 'required',
+                'integer',
                 'exists:products,id',
             ],
 
@@ -319,24 +613,16 @@ class SecretaryInventoryController extends Controller
                 'date',
             ],
 
-            /*
-            |--------------------------------------------------------------------------
-            | CUSTOMER ORDER
-            |--------------------------------------------------------------------------
-            |
-            | The form selects an actual Customer Order record.
-            |
-            */
-
             'customer_order_id' => [
                 'required',
+                'integer',
                 'exists:customer_orders,id',
             ],
 
-            'receipt_number' => [
+            'payment_id' => [
                 'required',
-                'string',
-                'max:255',
+                'integer',
+                'exists:payments,id',
             ],
 
             'received_by' => [
@@ -345,22 +631,10 @@ class SecretaryInventoryController extends Controller
                 'max:255',
             ],
 
-            /*
-            |--------------------------------------------------------------------------
-            | ACTUAL QUANTITY BEING RELEASED
-            |--------------------------------------------------------------------------
-            */
-
             'quantity' => [
                 'required',
                 'integer',
                 'min:1',
-            ],
-
-            'supplier_customer' => [
-                'nullable',
-                'string',
-                'max:255',
             ],
 
             'unit_price' => [
@@ -389,10 +663,6 @@ class SecretaryInventoryController extends Controller
             |--------------------------------------------------------------------------
             | LOCK CUSTOMER ORDER
             |--------------------------------------------------------------------------
-            |
-            | Prevents two Stock Out transactions from modifying the
-            | same Customer Order simultaneously.
-            |
             */
 
             $customerOrder = CustomerOrder::where(
@@ -405,30 +675,66 @@ class SecretaryInventoryController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | CHECK CUSTOMER ORDER STATUS
+            | VERIFY CUSTOMER ORDER STATUS
             |--------------------------------------------------------------------------
             */
 
-            if (!in_array($customerOrder->status, [
-                'confirmed',
-                'ready_for_delivery',
-                'partially_fulfilled',
-            ])) {
-                abort(
-                    422,
-                    'This Customer Order is not available for Stock Out.'
-                );
+            if (!in_array(
+                $customerOrder->status,
+                [
+                    'confirmed',
+                    'partially_fulfilled',
+                ],
+                true
+            )) {
+                throw ValidationException::withMessages([
+                    'customer_order_id' =>
+                        'This Customer Order is not available for Stock Out.',
+                ]);
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | FIND ORDER ITEM FOR SELECTED PRODUCT
+            | VERIFY RECEIPT
             |--------------------------------------------------------------------------
             |
-            | This makes sure the selected product actually belongs
-            | to the selected Customer Order.
+            | The selected receipt must:
+            | - exist
+            | - belong to the selected Customer Order
+            | - not be voided
             |
+            */
+
+            $payment = Payment::where(
+                'id',
+                $validated['payment_id']
+            )
+                ->where(
+                    'customer_order_id',
+                    $customerOrder->id
+                )
+                ->where(
+                    'status',
+                    '!=',
+                    'voided'
+                )
+                ->lockForUpdate()
+                ->first();
+
+
+            if (!$payment) {
+                throw ValidationException::withMessages([
+                    'payment_id' =>
+                        'The selected receipt does not belong to this Customer Order or is no longer valid.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | FIND CUSTOMER ORDER ITEM
+            |--------------------------------------------------------------------------
             */
 
             $orderItem = CustomerOrderItem::where(
@@ -444,33 +750,17 @@ class SecretaryInventoryController extends Controller
 
 
             if (!$orderItem) {
-                abort(
-                    422,
-                    'The selected product does not belong to this Customer Order.'
-                );
+                throw ValidationException::withMessages([
+                    'product_id' =>
+                        'The selected product does not belong to this Customer Order.',
+                ]);
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | CALCULATE ORDER QUANTITY
+            | CALCULATE REMAINING ORDER QUANTITY
             |--------------------------------------------------------------------------
-            |
-            | Example:
-            |
-            | Original Order Quantity = 40
-            | Already Fulfilled      = 0
-            | Quantity Still Needed  = 40
-            |
-            | If 10 were already delivered:
-            |
-            | Original Order Quantity = 40
-            | Already Fulfilled      = 10
-            | Quantity Still Needed  = 30
-            |
-            | This is BACKEND validation.
-            | It is different from Current Inventory Stock.
-            |
             */
 
             $fulfilledQuantity =
@@ -480,35 +770,32 @@ class SecretaryInventoryController extends Controller
                 (int) $orderItem->quantity;
 
             $remainingQuantity =
-                $orderedQuantity - $fulfilledQuantity;
+                $orderedQuantity
+                - $fulfilledQuantity;
 
-
-            /*
-            |--------------------------------------------------------------------------
-            | CHECK ORDER QUANTITY STILL NEEDED
-            |--------------------------------------------------------------------------
-            */
 
             if ($remainingQuantity <= 0) {
-                abort(
-                    422,
-                    'This product has already been fully fulfilled for this Customer Order.'
-                );
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        'This product has already been fully fulfilled for this Customer Order.',
+                ]);
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | THE ACTUAL STOCK OUT CANNOT EXCEED THE ORDER QUANTITY
-            | STILL NEEDED.
+            | PREVENT OVER-FULFILLMENT
             |--------------------------------------------------------------------------
             */
 
-            if ($validated['quantity'] > $remainingQuantity) {
-                abort(
-                    422,
-                    'Quantity to Stock Out cannot exceed the quantity still needed for this Customer Order.'
-                );
+            if (
+                (int) $validated['quantity']
+                > $remainingQuantity
+            ) {
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        'Quantity to Stock Out cannot exceed the quantity still needed for this Customer Order.',
+                ]);
             }
 
 
@@ -527,58 +814,48 @@ class SecretaryInventoryController extends Controller
 
 
             if (!$inventory) {
-                abort(
-                    422,
-                    'No inventory record exists for this product.'
-                );
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        'No inventory record exists for this product.',
+                ]);
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | CURRENT PHYSICAL STOCK
+            | CHECK CURRENT STOCK
             |--------------------------------------------------------------------------
-            |
-            | Example:
-            |
-            | Current Stock = 45
-            | Customer Order Quantity = 40
-            | Quantity to Stock Out = 40
-            | Stock After = 5
-            |
             */
 
             $stockBefore =
                 (int) $inventory->current_stock;
 
+            $quantityReleased =
+                (int) $validated['quantity'];
 
-            /*
-            |--------------------------------------------------------------------------
-            | CHECK PHYSICAL STOCK
-            |--------------------------------------------------------------------------
-            */
 
-            if ($validated['quantity'] > $stockBefore) {
-                abort(
-                    422,
-                    'Quantity to Stock Out cannot exceed the current stock.'
-                );
+            if ($quantityReleased > $stockBefore) {
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        'Quantity to Stock Out cannot exceed the current stock.',
+                ]);
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | CALCULATE STOCK AFTER DELIVERY
+            | CALCULATE STOCK AFTER
             |--------------------------------------------------------------------------
             */
 
             $stockAfter =
-                $stockBefore - $validated['quantity'];
+                $stockBefore
+                - $quantityReleased;
 
 
             /*
             |--------------------------------------------------------------------------
-            | UPDATE PHYSICAL INVENTORY
+            | UPDATE INVENTORY
             |--------------------------------------------------------------------------
             */
 
@@ -596,28 +873,26 @@ class SecretaryInventoryController extends Controller
 
             $newFulfilledQuantity =
                 $fulfilledQuantity
-                + $validated['quantity'];
+                + $quantityReleased;
 
 
             /*
             |--------------------------------------------------------------------------
             | UPDATE RESERVED QUANTITY
             |--------------------------------------------------------------------------
-            |
-            | Once products are actually released, the reserved quantity
-            | should decrease because the reservation is now fulfilled.
-            |
             */
 
             $currentReservedQuantity =
-                (int) ($orderItem->reserved_quantity ?? 0);
-
-            $newReservedQuantity =
-                max(
-                    0,
-                    $currentReservedQuantity
-                    - $validated['quantity']
+                (int) (
+                    $orderItem->reserved_quantity ?? 0
                 );
+
+
+            $newReservedQuantity = max(
+                0,
+                $currentReservedQuantity
+                - $quantityReleased
+            );
 
 
             $orderItem->update([
@@ -631,7 +906,7 @@ class SecretaryInventoryController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | CHECK WHETHER THE ENTIRE CUSTOMER ORDER IS FULFILLED
+            | CHECK WHOLE CUSTOMER ORDER
             |--------------------------------------------------------------------------
             */
 
@@ -654,22 +929,10 @@ class SecretaryInventoryController extends Controller
                     (int) $item->quantity;
 
 
-                /*
-                |--------------------------------------------------------------------------
-                | At least one item has been delivered.
-                |--------------------------------------------------------------------------
-                */
-
                 if ($itemFulfilled > 0) {
                     $someFulfilled = true;
                 }
 
-
-                /*
-                |--------------------------------------------------------------------------
-                | At least one item is still not completely fulfilled.
-                |--------------------------------------------------------------------------
-                */
 
                 if ($itemFulfilled < $itemQuantity) {
                     $allFulfilled = false;
@@ -685,23 +948,11 @@ class SecretaryInventoryController extends Controller
 
             if ($allFulfilled) {
 
-                /*
-                |--------------------------------------------------------------------------
-                | ALL ITEMS HAVE BEEN DELIVERED
-                |--------------------------------------------------------------------------
-                */
-
                 $customerOrder->update([
                     'status' => 'fulfilled',
                 ]);
 
             } elseif ($someFulfilled) {
-
-                /*
-                |--------------------------------------------------------------------------
-                | SOME ITEMS HAVE BEEN DELIVERED
-                |--------------------------------------------------------------------------
-                */
 
                 $customerOrder->update([
                     'status' => 'partially_fulfilled',
@@ -715,20 +966,15 @@ class SecretaryInventoryController extends Controller
             |--------------------------------------------------------------------------
             */
 
-            $product =
-                Product::findOrFail(
-                    $validated['product_id']
-                );
+            $product = Product::findOrFail(
+                $validated['product_id']
+            );
 
 
             /*
             |--------------------------------------------------------------------------
             | UNIT PRICE
             |--------------------------------------------------------------------------
-            |
-            | If the form does not provide a price, use the product's
-            | current unit price.
-            |
             */
 
             $unitPrice =
@@ -743,34 +989,19 @@ class SecretaryInventoryController extends Controller
             */
 
             $amount =
-                $validated['quantity']
-                * $unitPrice;
+                $quantityReleased
+                * (float) $unitPrice;
 
 
             /*
             |--------------------------------------------------------------------------
-            | CUSTOMER NAME
-            |--------------------------------------------------------------------------
-            |
-            | If no customer was manually supplied, use the Customer
-            | Order's customer name.
-            |
-            */
-
-            $supplierCustomer =
-                $validated['supplier_customer']
-                ?? ($customerOrder->customer_name ?? null);
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | CREATE INVENTORY MOVEMENT
+            | CREATE STOCK CARD MOVEMENT
             |--------------------------------------------------------------------------
             */
 
             InventoryMovement::create([
                 'product_id' =>
-                    $validated['product_id'],
+                    $product->id,
 
                 'user_id' =>
                     auth()->id(),
@@ -783,12 +1014,12 @@ class SecretaryInventoryController extends Controller
 
                 /*
                 |--------------------------------------------------------------------------
-                | Stock Out is recorded as a negative movement.
+                | Stock Out is stored as a negative movement.
                 |--------------------------------------------------------------------------
                 */
 
                 'quantity' =>
-                    -$validated['quantity'],
+                    -$quantityReleased,
 
                 'stock_before' =>
                     $stockBefore,
@@ -797,7 +1028,7 @@ class SecretaryInventoryController extends Controller
                     $stockAfter,
 
                 'supplier_customer' =>
-                    $supplierCustomer,
+                    $customerOrder->customer_name,
 
                 'unit_cost' =>
                     null,
@@ -814,7 +1045,7 @@ class SecretaryInventoryController extends Controller
 
                 /*
                 |--------------------------------------------------------------------------
-                | Store the actual Customer Order number in Stock Card.
+                | Customer Order number.
                 |--------------------------------------------------------------------------
                 */
 
@@ -823,12 +1054,18 @@ class SecretaryInventoryController extends Controller
 
                 /*
                 |--------------------------------------------------------------------------
-                | Receipt information.
+                | Actual Cashier receipt number.
                 |--------------------------------------------------------------------------
                 */
 
                 'receipt_number' =>
-                    $validated['receipt_number'],
+                    $payment->receipt_number,
+
+                /*
+                |--------------------------------------------------------------------------
+                | Person who physically received the goods.
+                |--------------------------------------------------------------------------
+                */
 
                 'received_by' =>
                     $validated['received_by'],
@@ -838,12 +1075,6 @@ class SecretaryInventoryController extends Controller
             ]);
         });
 
-
-        /*
-        |--------------------------------------------------------------------------
-        | RETURN TO INVENTORY PAGE
-        |--------------------------------------------------------------------------
-        */
 
         return redirect()
             ->route('secretary.inventory')
@@ -859,8 +1090,8 @@ class SecretaryInventoryController extends Controller
     | STOCK ADJUSTMENT
     |--------------------------------------------------------------------------
     |
-    | Adjustment compares the system stock with the actual
-    | physical count.
+    | Adjustment is used when the physical count does not match the
+    | system inventory.
     |
     */
 
@@ -869,6 +1100,7 @@ class SecretaryInventoryController extends Controller
         $validated = $request->validate([
             'product_id' => [
                 'required',
+                'integer',
                 'exists:products,id',
             ],
 
@@ -919,6 +1151,20 @@ class SecretaryInventoryController extends Controller
 
             /*
             |--------------------------------------------------------------------------
+            | LOCK INVENTORY
+            |--------------------------------------------------------------------------
+            */
+
+            $inventory = Inventory::where(
+                'id',
+                $inventory->id
+            )
+                ->lockForUpdate()
+                ->first();
+
+
+            /*
+            |--------------------------------------------------------------------------
             | CURRENT SYSTEM STOCK
             |--------------------------------------------------------------------------
             */
@@ -944,7 +1190,8 @@ class SecretaryInventoryController extends Controller
             */
 
             $difference =
-                $actualStock - $stockBefore;
+                $actualStock
+                - $stockBefore;
 
 
             /*
@@ -961,7 +1208,7 @@ class SecretaryInventoryController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | RECORD ADJUSTMENT
+            | CREATE ADJUSTMENT MOVEMENT
             |--------------------------------------------------------------------------
             */
 
@@ -1016,12 +1263,6 @@ class SecretaryInventoryController extends Controller
             ]);
         });
 
-
-        /*
-        |--------------------------------------------------------------------------
-        | RETURN TO INVENTORY PAGE
-        |--------------------------------------------------------------------------
-        */
 
         return redirect()
             ->route('secretary.inventory')

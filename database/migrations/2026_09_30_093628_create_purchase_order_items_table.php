@@ -19,7 +19,12 @@ return new class extends Migration
                 ->constrained('products')
                 ->restrictOnDelete();
 
+            // Quantity ordered from the supplier
             $table->integer('quantity');
+
+            // Quantity actually received from the supplier
+            $table->integer('received_quantity')
+                ->default(0);
 
             $table->decimal('unit_cost', 12, 2);
 

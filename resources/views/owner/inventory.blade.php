@@ -614,49 +614,175 @@
 
         <div class="modal-header">
             <h2>Stock In</h2>
-            <button type="button" class="close-x" onclick="closeModal('stockInModal')">&times;</button>
+            <button type="button"
+                    class="close-x"
+                    onclick="closeModal('stockInModal')">
+                &times;
+            </button>
         </div>
 
         <div class="modal-body">
 
-            <form action="{{ route('owner.inventory.stock-in') }}" method="POST">
+            <form action="{{ route('owner.inventory.stock-in') }}"
+                  method="POST">
 
                 @csrf
 
+                {{-- TRANSACTION DATE --}}
                 <div class="form-group">
                     <label>Transaction Date</label>
-                    <input type="date" name="transaction_date" value="{{ old('transaction_date', now()->format('Y-m-d')) }}" required>
-                    <small>Actual date the supplier delivery was received.</small>
+
+                    <input type="date"
+                           name="transaction_date"
+                           value="{{ old('transaction_date', now()->format('Y-m-d')) }}"
+                           required>
+
+                    <small>
+                        Actual date the supplier delivery was received.
+                    </small>
                 </div>
 
+
+                {{-- PURCHASE ORDER --}}
+                <div class="form-group">
+                    <label>Purchase Order</label>
+
+                    <select name="purchase_order_id"
+                            id="stockInPurchaseOrder"
+                            required
+                            onchange="populateStockInProducts(this.value)">
+
+                        <option value="">
+                            Select Purchase Order
+                        </option>
+
+                        @foreach($purchaseOrders as $purchaseOrder)
+
+                            <option value="{{ $purchaseOrder->id }}">
+                                {{ $purchaseOrder->po_number }}
+                                —
+                                {{ $purchaseOrder->supplier->supplier_name ?? 'No Supplier' }}
+                                —
+                                {{ ucfirst(str_replace('_', ' ', $purchaseOrder->status)) }}
+                            </option>
+
+                        @endforeach
+
+                    </select>
+
+                    <small>
+                        Select an Approved or Partially Received Purchase Order.
+                    </small>
+                </div>
+
+
+                {{-- PRODUCT --}}
                 <div class="form-group">
                     <label>Product</label>
-                    <select name="product_id" required>
-                        <option value="">Select Product</option>
-                        @foreach($products as $product)
-                            <option value="{{ $product->id }}">{{ $product->product_name }}</option>
-                        @endforeach
+
+                    <select name="product_id"
+                            id="stockInProduct"
+                            required
+                            disabled
+                            onchange="updateStockInRemainingQuantity(this.value)">
+
+                        <option value="">
+                            Select Purchase Order first
+                        </option>
+
                     </select>
+
+                    <small>
+                        Only products included in the selected Purchase Order
+                        can be received.
+                    </small>
                 </div>
 
+
+                {{-- REMAINING QUANTITY --}}
+                <div class="form-group">
+                    <label>Remaining Quantity</label>
+
+                    <div id="stockInRemainingQuantity"
+                         style="padding:10px 12px;
+                                background:#f8fafc;
+                                border:1px solid #e2e8f0;
+                                border-radius:6px;">
+                        —
+                    </div>
+
+                    <small>
+                        Maximum quantity that can be received for this
+                        Purchase Order item.
+                    </small>
+                </div>
+
+
+                {{-- QUANTITY RECEIVED --}}
                 <div class="form-group">
                     <label>Quantity Received</label>
-                    <input type="number" name="quantity" min="1" step="1" placeholder="Enter quantity actually received" required>
+
+                    <input type="number"
+                           name="quantity"
+                           id="stockInQuantity"
+                           min="1"
+                           step="1"
+                           placeholder="Enter quantity actually received"
+                           required
+                           disabled>
                 </div>
 
+
+                {{-- UNIT COST --}}
+                <div class="form-group">
+                    <label>Unit Cost</label>
+
+                    <input type="number"
+                           name="unit_cost"
+                           id="stockInUnitCost"
+                           min="0"
+                           step="0.01"
+                           placeholder="Uses Purchase Order cost if blank">
+                </div>
+
+
+                {{-- REASON --}}
                 <div class="form-group">
                     <label>Reason <small>(Optional)</small></label>
-                    <input type="text" name="reason" placeholder="e.g. Supplier delivery received">
+
+                    <input type="text"
+                           name="reason"
+                           value="{{ old('reason') }}"
+                           placeholder="e.g. Supplier delivery received">
                 </div>
 
+
+                {{-- REFERENCE --}}
                 <div class="form-group">
-                    <label>Purchase Order / Reference <small>(Optional)</small></label>
-                    <input type="text" name="reference" placeholder="e.g. PO-2026-0001">
+                    <label>Reference</label>
+
+                    <input type="text"
+                           name="reference"
+                           id="stockInReference"
+                           placeholder="Purchase Order number"
+                           required>
                 </div>
 
+
+                {{-- ACTIONS --}}
                 <div class="form-actions">
-                    <button type="button" class="btn btn-cancel" onclick="closeModal('stockInModal')">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Stock In</button>
+
+                    <button type="button"
+                            class="btn btn-cancel"
+                            onclick="closeModal('stockInModal')">
+                        Cancel
+                    </button>
+
+                    <button type="submit"
+                            class="btn btn-primary">
+                        Save Stock In
+                    </button>
+
                 </div>
 
             </form>
@@ -937,6 +1063,52 @@
 
     })->values();
 
+    $purchaseOrderJavascriptData = collect($purchaseOrders ?? [])->map(function ($purchaseOrder) {
+
+        return [
+            'id' => $purchaseOrder->id,
+            'po_number' => $purchaseOrder->po_number,
+            'status' => $purchaseOrder->status,
+
+            'supplier' => [
+                'supplier_name' => $purchaseOrder->supplier->supplier_name ?? null,
+            ],
+
+            'items' => $purchaseOrder->items->map(function ($item) {
+
+                $orderedQuantity = (int) $item->quantity;
+
+                $receivedQuantity = (int) ($item->received_quantity ?? 0);
+
+                $remainingQuantity = max(
+                    0,
+                    $orderedQuantity - $receivedQuantity
+                );
+
+                return [
+                    'product_id' => $item->product_id,
+
+                    'product_name' =>
+                        $item->product->product_name ?? 'Unknown Product',
+
+                    'quantity' =>
+                        $orderedQuantity,
+
+                    'received_quantity' =>
+                        $receivedQuantity,
+
+                    'remaining_quantity' =>
+                        $remainingQuantity,
+
+                    'unit_cost' =>
+                        $item->unit_cost,
+                ];
+
+            })->values(),
+
+        ];
+
+    })->values();
 @endphp
 
 
@@ -947,6 +1119,8 @@
     const customerOrders = @js($customerOrderJavascriptData);
 
     const payments = @js($paymentJavascriptData);
+
+    const purchaseOrders = @js($purchaseOrderJavascriptData);
 
 
     /* TABS */
@@ -1057,6 +1231,337 @@
 
     }
 
+    /* STOCK IN - PURCHASE ORDER PRODUCTS */
+    function populateStockInProducts(purchaseOrderId) {
+
+        const productSelect =
+            document.getElementById('stockInProduct');
+
+        const quantityInput =
+            document.getElementById('stockInQuantity');
+
+        const remainingDisplay =
+            document.getElementById('stockInRemainingQuantity');
+
+        const unitCostInput =
+            document.getElementById('stockInUnitCost');
+
+        const referenceInput =
+            document.getElementById('stockInReference');
+
+
+        if (!productSelect) return;
+
+
+        /*
+        * Reset product dropdown.
+        */
+        productSelect.innerHTML =
+            '<option value="">Select Product</option>';
+
+        productSelect.disabled = true;
+
+
+        /*
+        * Reset quantity.
+        */
+        if (quantityInput) {
+            quantityInput.value = '';
+            quantityInput.max = '';
+            quantityInput.disabled = true;
+        }
+
+
+        /*
+        * Reset remaining quantity.
+        */
+        if (remainingDisplay) {
+            remainingDisplay.textContent = '—';
+        }
+
+
+        /*
+        * Reset unit cost.
+        */
+        if (unitCostInput) {
+            unitCostInput.value = '';
+        }
+
+
+        /*
+        * Find selected Purchase Order.
+        */
+        const purchaseOrder = purchaseOrders.find(function (order) {
+
+            return Number(order.id) === Number(purchaseOrderId);
+
+        });
+
+
+        if (!purchaseOrder) return;
+
+
+        /*
+        * Automatically use the PO number
+        * as the reference.
+        */
+        if (referenceInput) {
+            referenceInput.value =
+                purchaseOrder.po_number ?? '';
+        }
+
+
+        /*
+        * Add only products that still have
+        * quantity remaining to receive.
+        */
+        let hasProducts = false;
+
+
+        (purchaseOrder.items ?? []).forEach(function (item) {
+
+            const remainingQuantity =
+                Number(item.remaining_quantity ?? 0);
+
+
+            /*
+            * Fully received items cannot be
+            * selected again.
+            */
+            if (remainingQuantity <= 0) {
+                return;
+            }
+
+
+            hasProducts = true;
+
+
+            const option =
+                document.createElement('option');
+
+
+            option.value =
+                item.product_id;
+
+
+            option.textContent =
+                `${item.product_name} — Remaining: ${remainingQuantity}`;
+
+
+            option.dataset.remainingQuantity =
+                remainingQuantity;
+
+
+            option.dataset.unitCost =
+                item.unit_cost ?? '';
+
+
+            productSelect.appendChild(option);
+
+        });
+
+
+        if (!hasProducts) {
+
+            const option =
+                document.createElement('option');
+
+            option.value = '';
+
+            option.textContent =
+                'All products in this PO are fully received';
+
+            option.disabled = true;
+
+            productSelect.appendChild(option);
+
+            return;
+        }
+
+
+        productSelect.disabled = false;
+    }
+
+
+    /* STOCK IN - REMAINING QUANTITY */
+    function updateStockInRemainingQuantity(productId) {
+
+        const purchaseOrderSelect =
+            document.getElementById('stockInPurchaseOrder');
+
+        const productSelect =
+            document.getElementById('stockInProduct');
+
+        const quantityInput =
+            document.getElementById('stockInQuantity');
+
+        const remainingDisplay =
+            document.getElementById('stockInRemainingQuantity');
+
+        const unitCostInput =
+            document.getElementById('stockInUnitCost');
+
+
+        if (
+            !purchaseOrderSelect ||
+            !productSelect
+        ) {
+            return;
+        }
+
+
+        const purchaseOrderId =
+            purchaseOrderSelect.value;
+
+
+        const purchaseOrder =
+            purchaseOrders.find(function (order) {
+
+                return Number(order.id) ===
+                    Number(purchaseOrderId);
+
+            });
+
+
+        if (!purchaseOrder) return;
+
+
+        const item =
+            (purchaseOrder.items ?? []).find(function (item) {
+
+                return Number(item.product_id) ===
+                    Number(productId);
+
+            });
+
+
+        if (!item) {
+
+            if (remainingDisplay) {
+                remainingDisplay.textContent = '—';
+            }
+
+            if (quantityInput) {
+                quantityInput.value = '';
+                quantityInput.max = '';
+                quantityInput.disabled = true;
+            }
+
+            return;
+        }
+
+
+        const remainingQuantity =
+            Number(item.remaining_quantity ?? 0);
+
+
+        /*
+        * Display remaining quantity.
+        */
+        if (remainingDisplay) {
+
+            remainingDisplay.textContent =
+                remainingQuantity.toLocaleString();
+
+        }
+
+
+        /*
+        * Limit Stock In quantity.
+        */
+        if (quantityInput) {
+
+            quantityInput.value = '';
+
+            quantityInput.min = 1;
+
+            quantityInput.max =
+                remainingQuantity;
+
+            quantityInput.disabled =
+                remainingQuantity <= 0;
+
+        }
+
+
+        /*
+        * Automatically show the PO unit cost.
+        *
+        * The user can still override it because
+        * the field is optional.
+        */
+        if (unitCostInput) {
+
+            unitCostInput.value =
+                item.unit_cost ?? '';
+
+        }
+    }
+
+
+    /* STOCK IN - RESET MODAL */
+    function resetStockInModal() {
+
+        const purchaseOrderSelect =
+            document.getElementById('stockInPurchaseOrder');
+
+        const productSelect =
+            document.getElementById('stockInProduct');
+
+        const quantityInput =
+            document.getElementById('stockInQuantity');
+
+        const remainingDisplay =
+            document.getElementById('stockInRemainingQuantity');
+
+        const unitCostInput =
+            document.getElementById('stockInUnitCost');
+
+        const referenceInput =
+            document.getElementById('stockInReference');
+
+
+        if (purchaseOrderSelect) {
+            purchaseOrderSelect.value = '';
+        }
+
+
+        if (productSelect) {
+
+            productSelect.innerHTML =
+                '<option value="">Select Purchase Order first</option>';
+
+            productSelect.disabled = true;
+
+        }
+
+
+        if (quantityInput) {
+
+            quantityInput.value = '';
+
+            quantityInput.max = '';
+
+            quantityInput.disabled = true;
+
+        }
+
+
+        if (remainingDisplay) {
+            remainingDisplay.textContent = '—';
+        }
+
+
+        if (unitCostInput) {
+            unitCostInput.value = '';
+        }
+
+
+        if (referenceInput) {
+            referenceInput.value = '';
+        }
+
+    }
 
     /* CUSTOMER ORDER DROPDOWN */
     function populateCustomerOrderDropdown(productId) {
@@ -1067,7 +1572,7 @@
 
         select.innerHTML = '<option value="">Select Customer Order</option>';
 
-        const eligibleStatuses = ['confirmed', 'ready_for_delivery', 'partially_fulfilled'];
+        const eligibleStatuses = ['confirmed', 'partially_fulfilled'];
 
         let hasEligibleOrder = false;
 

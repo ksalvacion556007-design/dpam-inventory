@@ -8,6 +8,7 @@ use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\Product;
 use App\Models\Payment;
+use App\Models\PurchaseOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -47,7 +48,6 @@ class InventoryController extends Controller
         ])
             ->whereIn('status', [
                 'confirmed',
-                'ready_for_delivery',
                 'partially_fulfilled',
             ])
             ->whereHas('items', function ($query) {
@@ -76,13 +76,35 @@ class InventoryController extends Controller
             ->orderByDesc('id')
             ->get();
 
+        /*
+         * Purchase Orders that can receive supplier deliveries.
+         *
+         * Approved:
+         *     Supplier delivery has not started yet.
+         *
+         * Partially Received:
+         *     Some ordered quantity has already been received.
+         */
+        $purchaseOrders = PurchaseOrder::with([
+            'supplier',
+            'items.product',
+        ])
+            ->whereIn('status', [
+                'approved',
+                'partially_received',
+            ])
+            ->orderByDesc('po_date')
+            ->orderByDesc('id')
+            ->get();
+
         return view(
             'owner.inventory',
             compact(
                 'products',
                 'movements',
                 'customerOrders',
-                'payments'
+                'payments',
+                'purchaseOrders'
             )
         );
     }
@@ -96,17 +118,27 @@ class InventoryController extends Controller
     | Stock In represents the actual delivery of products
     | from a supplier.
     |
-    | Creating or approving a Purchase Order does NOT
-    | automatically increase inventory.
+    | Purchase Order creation does NOT increase inventory.
     |
-    | Inventory increases only when the actual supplier
-    | delivery is received and recorded here.
+    | Purchase Order approval does NOT increase inventory.
+    |
+    | Only the actual supplier delivery recorded here
+    | increases physical inventory.
     |
     */
 
     public function stockIn(Request $request)
     {
         $validated = $request->validate([
+
+            /*
+             * The actual Purchase Order being received.
+             */
+            'purchase_order_id' => [
+                'required',
+                'integer',
+                'exists:purchase_orders,id',
+            ],
 
             'product_id' => [
                 'required',
@@ -151,6 +183,101 @@ class InventoryController extends Controller
 
         DB::transaction(function () use ($validated) {
 
+            /*
+             * Lock the Purchase Order while receiving.
+             *
+             * This prevents two Stock In transactions
+             * from updating the same PO simultaneously.
+             */
+            $purchaseOrder = PurchaseOrder::with([
+                'supplier',
+                'items.product',
+            ])
+                ->lockForUpdate()
+                ->findOrFail(
+                    $validated['purchase_order_id']
+                );
+
+            /*
+             * Only Approved and Partially Received
+             * Purchase Orders can receive goods.
+             */
+            if (
+                !in_array(
+                    $purchaseOrder->status,
+                    [
+                        'approved',
+                        'partially_received',
+                    ],
+                    true
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'purchase_order_id' =>
+                        'Only Approved or Partially Received Purchase Orders can receive Stock In.',
+                ]);
+            }
+
+            /*
+             * Find the selected product inside
+             * the Purchase Order.
+             */
+            $purchaseOrderItem = $purchaseOrder->items
+                ->firstWhere(
+                    'product_id',
+                    (int) $validated['product_id']
+                );
+
+            if (!$purchaseOrderItem) {
+                throw ValidationException::withMessages([
+                    'product_id' =>
+                        'The selected product is not included in this Purchase Order.',
+                ]);
+            }
+
+            /*
+             * Ordered quantity.
+             */
+            $orderedQuantity =
+                (int) $purchaseOrderItem->quantity;
+
+            /*
+             * Quantity already received.
+             */
+            $receivedQuantity =
+                (int) $purchaseOrderItem->received_quantity;
+
+            /*
+             * Quantity still remaining.
+             */
+            $remainingQuantity =
+                $orderedQuantity -
+                $receivedQuantity;
+
+            if ($remainingQuantity <= 0) {
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        'This Purchase Order item has already been fully received.',
+                ]);
+            }
+
+            /*
+             * Do not allow the supplier delivery
+             * to exceed the remaining PO quantity.
+             */
+            if (
+                (int) $validated['quantity'] >
+                $remainingQuantity
+            ) {
+                throw ValidationException::withMessages([
+                    'quantity' =>
+                        "Only {$remainingQuantity} unit(s) remain to be received for this Purchase Order item.",
+                ]);
+            }
+
+            /*
+             * Get the product.
+             */
             $product = Product::findOrFail(
                 $validated['product_id']
             );
@@ -177,7 +304,18 @@ class InventoryController extends Controller
                 ]
             );
 
-            $stockBefore = (int) $inventory->current_stock;
+            /*
+             * Lock inventory while updating it.
+             */
+            $inventory = Inventory::where(
+                'id',
+                $inventory->id
+            )
+                ->lockForUpdate()
+                ->first();
+
+            $stockBefore =
+                (int) $inventory->current_stock;
 
             $stockAfter =
                 $stockBefore +
@@ -191,12 +329,18 @@ class InventoryController extends Controller
             ]);
 
             /*
-             * Calculate Stock In amount when unit cost
-             * is supplied.
+             * If the user manually enters a unit cost,
+             * use it.
+             *
+             * Otherwise use the Purchase Order item cost.
              */
             $unitCost =
-                $validated['unit_cost'] ?? null;
+                $validated['unit_cost']
+                ?? $purchaseOrderItem->unit_cost;
 
+            /*
+             * Calculate Stock Card amount.
+             */
             $amount = null;
 
             if ($unitCost !== null) {
@@ -206,7 +350,52 @@ class InventoryController extends Controller
             }
 
             /*
-             * Record Stock In movement.
+             * Update the actual received quantity
+             * of the Purchase Order item.
+             */
+            $newReceivedQuantity =
+                $receivedQuantity +
+                (int) $validated['quantity'];
+
+            $purchaseOrderItem->update([
+                'received_quantity' =>
+                    $newReceivedQuantity,
+            ]);
+
+            /*
+             * Check whether ALL Purchase Order items
+             * have now been completely received.
+             */
+            $allItemsFullyReceived =
+                $purchaseOrder->items()
+                    ->whereColumn(
+                        'received_quantity',
+                        '<',
+                        'quantity'
+                    )
+                    ->doesntExist();
+
+            if ($allItemsFullyReceived) {
+
+                /*
+                 * Every item has been received.
+                 */
+                $purchaseOrder->update([
+                    'status' => 'received',
+                ]);
+
+            } else {
+
+                /*
+                 * At least one item is still outstanding.
+                 */
+                $purchaseOrder->update([
+                    'status' => 'partially_received',
+                ]);
+            }
+
+            /*
+             * Record Stock In movement in the Stock Card.
              */
             InventoryMovement::create([
 
@@ -231,9 +420,13 @@ class InventoryController extends Controller
                 'stock_after' =>
                     $stockAfter,
 
+                /*
+                 * Use the supplier from the PO
+                 * when no supplier/customer was manually entered.
+                 */
                 'supplier_customer' =>
                     $validated['supplier_customer']
-                    ?? null,
+                    ?? optional($purchaseOrder->supplier)->supplier_name,
 
                 'unit_cost' =>
                     $unitCost,
@@ -246,7 +439,7 @@ class InventoryController extends Controller
 
                 'reason' =>
                     $validated['reason']
-                    ?? null,
+                    ?? 'Supplier delivery',
 
                 'customer_order_reference' =>
                     null,
@@ -257,9 +450,12 @@ class InventoryController extends Controller
                 'received_by' =>
                     null,
 
+                /*
+                 * Store the PO number in the Stock Card.
+                 */
                 'reference' =>
                     $validated['reference']
-                    ?? null,
+                    ?? $purchaseOrder->po_number,
             ]);
         });
 
@@ -267,7 +463,7 @@ class InventoryController extends Controller
             ->route('owner.inventory')
             ->with(
                 'success',
-                'Stock added successfully.'
+                'Supplier delivery recorded. Inventory and Purchase Order receiving status have been updated successfully.'
             );
     }
 
@@ -276,35 +472,6 @@ class InventoryController extends Controller
     |--------------------------------------------------------------------------
     | STOCK OUT
     |--------------------------------------------------------------------------
-    |
-    | Stock Out represents the actual customer delivery / release.
-    |
-    | Flow:
-    |
-    | Customer Order
-    |       ↓
-    | Secretary checks inventory
-    |       ↓
-    | Owner confirms order
-    |       ↓
-    | Cashier creates/issues receipt
-    |       ↓
-    | Actual delivery / release
-    |       ↓
-    | Owner records Stock Out
-    |       ↓
-    | Physical inventory decreases
-    |       ↓
-    | Customer Order fulfillment is updated
-    |
-    | IMPORTANT:
-    |
-    | Customer Order creation does NOT deduct inventory.
-    |
-    | Payment does NOT deduct inventory.
-    |
-    | Stock Out is what deducts the physical inventory.
-    |
     */
 
     public function stockOut(Request $request)
@@ -327,31 +494,18 @@ class InventoryController extends Controller
                 'min:1',
             ],
 
-            /*
-             * Actual Customer Order ID selected
-             * from the Customer Order dropdown.
-             */
             'customer_order_id' => [
                 'required',
                 'integer',
                 'exists:customer_orders,id',
             ],
 
-            /*
-             * Receipt number created by Cashier.
-             *
-             * The receipt is verified below against
-             * the payments table.
-             */
             'receipt_number' => [
                 'required',
                 'string',
                 'max:255',
             ],
 
-            /*
-             * Person who received the products.
-             */
             'received_by' => [
                 'required',
                 'string',
@@ -364,12 +518,6 @@ class InventoryController extends Controller
                 'max:255',
             ],
 
-            /*
-             * Optional override of the product selling price.
-             *
-             * If not supplied, the Product unit price
-             * will automatically be used.
-             */
             'unit_price' => [
                 'nullable',
                 'numeric',
@@ -391,11 +539,6 @@ class InventoryController extends Controller
 
         DB::transaction(function () use ($validated) {
 
-            /*
-             * Lock the Customer Order so that two
-             * Stock Out transactions cannot fulfill
-             * the same quantity simultaneously.
-             */
             $customerOrder = CustomerOrder::with([
                 'items.product',
             ])
@@ -405,14 +548,7 @@ class InventoryController extends Controller
                 );
 
             /*
-             * Verify that the receipt actually exists
-             * in the Cashier payments table.
-             *
-             * The receipt must:
-             *
-             * 1. Exist
-             * 2. Belong to this Customer Order
-             * 3. Not be voided
+             * Verify the Cashier receipt.
              */
             $payment = Payment::where(
                 'receipt_number',
@@ -438,15 +574,14 @@ class InventoryController extends Controller
             }
 
             /*
-             * Only confirmed / delivery-ready orders
-             * can be physically released.
+             * Only confirmed or partially fulfilled
+             * orders can be physically released.
              */
             if (
                 !in_array(
                     $customerOrder->status,
                     [
                         'confirmed',
-                        'ready_for_delivery',
                         'partially_fulfilled',
                     ],
                     true
@@ -459,8 +594,7 @@ class InventoryController extends Controller
             }
 
             /*
-             * Find the selected product inside
-             * the selected Customer Order.
+             * Find the selected product in the order.
              */
             $orderItem = $customerOrder->items
                 ->firstWhere(
@@ -475,20 +609,12 @@ class InventoryController extends Controller
                 ]);
             }
 
-            /*
-             * Determine how much of this order item
-             * has already been fulfilled.
-             */
             $requestedQuantity =
                 (int) $orderItem->quantity;
 
             $fulfilledQuantity =
                 (int) $orderItem->fulfilled_quantity;
 
-            /*
-             * Quantity still needed for this
-             * Customer Order item.
-             */
             $remainingQuantity =
                 $requestedQuantity -
                 $fulfilledQuantity;
@@ -500,10 +626,6 @@ class InventoryController extends Controller
                 ]);
             }
 
-            /*
-             * Stock Out cannot exceed the quantity
-             * still needed by the Customer Order.
-             */
             if (
                 (int) $validated['quantity'] >
                 $remainingQuantity
@@ -515,7 +637,7 @@ class InventoryController extends Controller
             }
 
             /*
-             * Get and lock the physical inventory record.
+             * Lock physical inventory.
              */
             $inventory = Inventory::where(
                 'product_id',
@@ -534,9 +656,6 @@ class InventoryController extends Controller
             $stockBefore =
                 (int) $inventory->current_stock;
 
-            /*
-             * Prevent negative physical inventory.
-             */
             if (
                 (int) $validated['quantity'] >
                 $stockBefore
@@ -547,9 +666,6 @@ class InventoryController extends Controller
                 ]);
             }
 
-            /*
-             * Calculate the new physical stock.
-             */
             $stockAfter =
                 $stockBefore -
                 (int) $validated['quantity'];
@@ -562,16 +678,12 @@ class InventoryController extends Controller
             ]);
 
             /*
-             * Update Customer Order fulfillment.
+             * Update fulfillment.
              */
             $newFulfilledQuantity =
                 $fulfilledQuantity +
                 (int) $validated['quantity'];
 
-            /*
-             * Reserved quantity decreases when
-             * reserved products are physically released.
-             */
             $newReservedQuantity = max(
                 0,
                 (int) $orderItem->reserved_quantity -
@@ -587,8 +699,7 @@ class InventoryController extends Controller
             ]);
 
             /*
-             * Check whether all items in the
-             * Customer Order have been fulfilled.
+             * Determine overall Customer Order status.
              */
             $customerOrder->refresh();
 
@@ -609,34 +720,22 @@ class InventoryController extends Controller
 
             } else {
 
-                /*
-                 * At least one item still needs to be fulfilled.
-                 */
                 $customerOrder->update([
                     'status' => 'partially_fulfilled',
                 ]);
             }
 
             /*
-             * Get the Product so that its unit price
-             * can be used when the form does not provide
-             * a specific unit price.
+             * Product selling price.
              */
             $product = Product::findOrFail(
                 $validated['product_id']
             );
 
-            /*
-             * Use the supplied unit price if provided.
-             * Otherwise use the Product's current unit price.
-             */
             $unitPrice =
                 $validated['unit_price']
                 ?? $product->unit_price;
 
-            /*
-             * Calculate Stock Card amount.
-             */
             $amount =
                 (int) $validated['quantity'] *
                 $unitPrice;
@@ -659,8 +758,7 @@ class InventoryController extends Controller
                     $validated['transaction_date'],
 
                 /*
-                 * Negative quantity means physical
-                 * inventory is leaving DPAM.
+                 * Stock Out is stored as negative movement.
                  */
                 'quantity' =>
                     -(int) $validated['quantity'],
@@ -671,10 +769,6 @@ class InventoryController extends Controller
                 'stock_after' =>
                     $stockAfter,
 
-                /*
-                 * If supplier_customer was not manually
-                 * supplied, use the Customer Order customer.
-                 */
                 'supplier_customer' =>
                     $validated['supplier_customer']
                     ?? $customerOrder->customer_name,
@@ -692,16 +786,9 @@ class InventoryController extends Controller
                     $validated['reason']
                     ?? 'Customer delivery / release',
 
-                /*
-                 * Store the actual Customer Order number
-                 * in the Stock Card.
-                 */
                 'customer_order_reference' =>
                     $customerOrder->order_number,
 
-                /*
-                 * Store the verified Cashier receipt number.
-                 */
                 'receipt_number' =>
                     $validated['receipt_number'],
 
@@ -727,10 +814,6 @@ class InventoryController extends Controller
     |--------------------------------------------------------------------------
     | ADJUST STOCK
     |--------------------------------------------------------------------------
-    |
-    | Adjust Stock is used when the actual physical count
-    | differs from the system inventory.
-    |
     */
 
     public function adjust(Request $request)
@@ -772,9 +855,6 @@ class InventoryController extends Controller
                 $validated['product_id']
             );
 
-            /*
-             * Archived products cannot be adjusted.
-             */
             if ($product->status === 'archived') {
                 abort(
                     422,
@@ -782,9 +862,6 @@ class InventoryController extends Controller
                 );
             }
 
-            /*
-             * Find or create inventory record.
-             */
             $inventory = Inventory::firstOrCreate(
                 [
                     'product_id' => $product->id,
@@ -800,32 +877,18 @@ class InventoryController extends Controller
             $stockAfter =
                 (int) $validated['actual_stock'];
 
-            /*
-             * Positive difference = stock increase.
-             * Negative difference = stock decrease.
-             */
             $difference =
                 $stockAfter -
                 $stockBefore;
 
-            /*
-             * No movement is necessary if the
-             * physical count matches the system count.
-             */
             if ($difference === 0) {
                 return;
             }
 
-            /*
-             * Update physical inventory.
-             */
             $inventory->update([
                 'current_stock' => $stockAfter,
             ]);
 
-            /*
-             * Record adjustment in Stock Card.
-             */
             InventoryMovement::create([
 
                 'product_id' =>

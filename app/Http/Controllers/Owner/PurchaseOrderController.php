@@ -400,6 +400,33 @@ class PurchaseOrderController extends Controller
             );
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | SUBMIT FOR APPROVAL
+    |--------------------------------------------------------------------------
+    */
+
+    public function submit(PurchaseOrder $purchaseOrder)
+    {
+        if ($purchaseOrder->status !== 'draft') {
+
+            return back()->withErrors([
+                'purchase_order' =>
+                    'Only Draft Purchase Orders can be submitted for approval.',
+            ]);
+        }
+
+        $purchaseOrder->update([
+            'status' => 'pending',
+        ]);
+
+        return redirect()
+            ->route('owner.purchase-orders')
+            ->with(
+                'success',
+                'Purchase Order submitted for Owner approval successfully.'
+            );
+    }
 
     /*
     |--------------------------------------------------------------------------

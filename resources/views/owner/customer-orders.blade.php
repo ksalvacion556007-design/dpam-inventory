@@ -159,8 +159,6 @@
         .status-insufficient, .status-cancelled, .status-out-stock, .badge-red { background: #fee2e2; color: #991b1b; }
         .status-confirmed, .status-approved, .badge-blue { background: #dbeafe; color: #1e40af; }
         .status-purchasing, .status-partial { background: #ffedd5; color: #9a3412; }
-        .status-ready { background: #e0f2fe; color: #075985; }
-        .status-delivered { background: #ede9fe; color: #6d28d9; }
         .status-default, .status-draft, .status-archived, .badge-gray { background: #e5e7eb; color: #374151; }
         .movement-badge { display: inline-block; padding: 4px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; }
         .movement-in { background: #dcfce7; color: #166534; }
@@ -426,13 +424,10 @@
             <select id="statusFilter" onchange="filterOrders()">
                 <option value="">All Order Statuses</option>
                 <option value="pending_inventory_check">Pending Inventory Check</option>
-                <option value="inventory_checked">Inventory Checked</option>
                 <option value="confirmed">Confirmed</option>
-                <option value="for_purchasing">For Purchasing</option>
-                <option value="ready_for_delivery">Ready for Delivery</option>
                 <option value="partially_fulfilled">Partially Fulfilled</option>
-                <option value="delivered">Delivered</option>
                 <option value="fulfilled">Fulfilled</option>
+                <option value="for_purchasing">For Purchasing</option>
                 <option value="cancelled">Cancelled</option>
             </select>
 
@@ -473,26 +468,20 @@
 
                                 $statusLabel = match($order->status) {
                                     'pending_inventory_check' => 'Pending Inventory Check',
-                                    'inventory_checked' => 'Inventory Checked',
                                     'confirmed' => 'Confirmed',
-                                    'for_purchasing' => 'For Purchasing',
-                                    'ready_for_delivery' => 'Ready for Delivery',
                                     'partially_fulfilled' => 'Partially Fulfilled',
-                                    'delivered' => 'Delivered',
                                     'fulfilled' => 'Fulfilled',
+                                    'for_purchasing' => 'For Purchasing',
                                     'cancelled' => 'Cancelled',
                                     default => ucfirst(str_replace('_', ' ', $order->status)),
                                 };
 
                                 $statusClass = match($order->status) {
                                     'pending_inventory_check' => 'status-pending',
-                                    'inventory_checked' => 'status-confirmed',
                                     'confirmed' => 'status-confirmed',
-                                    'for_purchasing' => 'status-purchasing',
-                                    'ready_for_delivery' => 'status-ready',
                                     'partially_fulfilled' => 'status-partial',
-                                    'delivered' => 'status-delivered',
                                     'fulfilled' => 'status-fulfilled',
+                                    'for_purchasing' => 'status-purchasing',
                                     'cancelled' => 'status-cancelled',
                                     default => 'status-default',
                                 };
@@ -546,8 +535,14 @@
 
                                         <button type="button" class="btn btn-sm btn-secondary" onclick="viewOrder({{ $order->id }})">View</button>
 
-                                        @if($order->status !== 'fulfilled' && $order->status !== 'cancelled')
-                                            <button type="button" class="btn btn-sm btn-primary" onclick="openOwnerDecisionModal({{ $order->id }})">Owner Decision</button>
+                                        @if($order->status === 'pending_inventory_check')
+                                            <button
+                                                type="button"
+                                                class="btn btn-sm btn-primary"
+                                                onclick="openOwnerDecisionModal({{ $order->id }})"
+                                            >
+                                                Owner Decision
+                                            </button>
                                         @endif
 
                                     </div>
@@ -621,7 +616,7 @@
                         <thead>
                             <tr>
                                 <th>Product <span class="required">*</span></th>
-                                <th style="width:130px;">Physical Stock</th>
+                                <th style="width:130px;">System Stock</th>
                                 <th style="width:120px;">Requested Qty <span class="required">*</span></th>
                                 <th style="width:140px;">Unit Price</th>
                                 <th style="width:150px;">Subtotal</th>
@@ -1242,18 +1237,30 @@
     {
         switch (status) {
 
-            case 'pending_inventory_check': return 'Pending Inventory Check';
-            case 'inventory_checked': return 'Inventory Checked';
-            case 'confirmed': return 'Confirmed';
-            case 'for_purchasing': return 'For Purchasing';
-            case 'ready_for_delivery': return 'Ready for Delivery';
-            case 'partially_fulfilled': return 'Partially Fulfilled';
-            case 'delivered': return 'Delivered';
-            case 'fulfilled': return 'Fulfilled';
-            case 'cancelled': return 'Cancelled';
+            case 'pending_inventory_check':
+                return 'Pending Inventory Check';
+
+            case 'confirmed':
+                return 'Confirmed';
+
+            case 'partially_fulfilled':
+                return 'Partially Fulfilled';
+
+            case 'fulfilled':
+                return 'Fulfilled';
+
+            case 'for_purchasing':
+                return 'For Purchasing';
+
+            case 'cancelled':
+                return 'Cancelled';
 
             default:
-                return String(status || '').replace(/_/g, ' ').replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
+                return String(status || '')
+                    .replace(/_/g, ' ')
+                    .replace(/\b\w/g, function (letter) {
+                        return letter.toUpperCase();
+                    });
         }
     }
 

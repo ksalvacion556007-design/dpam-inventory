@@ -23,24 +23,41 @@ return new class extends Migration
              * Customer order workflow:
              *
              * pending_inventory_check
-             * inventory_checked
              * confirmed
-             * for_purchasing
-             * ready_for_delivery
              * partially_fulfilled
-             * delivered
              * fulfilled
+             * for_purchasing
              * cancelled
+             *
+             * pending_inventory_check:
+             * Order has been recorded and is waiting for
+             * the Secretary to check inventory availability.
+             *
+             * confirmed:
+             * Secretary confirmed sufficient availability
+             * and the Owner confirmed the customer order.
+             *
+             * partially_fulfilled:
+             * Some requested quantity has already been
+             * physically released through Stock Out.
+             *
+             * fulfilled:
+             * All requested quantities have been physically
+             * released through Stock Out.
+             *
+             * for_purchasing:
+             * Available inventory is insufficient and the
+             * Owner decides that purchasing is required.
+             *
+             * cancelled:
+             * The customer order will not proceed.
              */
             $table->enum('status', [
                 'pending_inventory_check',
-                'inventory_checked',
                 'confirmed',
-                'for_purchasing',
-                'ready_for_delivery',
                 'partially_fulfilled',
-                'delivered',
                 'fulfilled',
+                'for_purchasing',
                 'cancelled',
             ])->default('pending_inventory_check');
 
@@ -53,17 +70,28 @@ return new class extends Migration
                 'insufficient',
             ])->default('pending');
 
+            /*
+             * Secretary who performed the inventory check.
+             */
             $table->foreignId('inventory_checked_by')
                 ->nullable()
                 ->constrained('users')
                 ->nullOnDelete();
 
-            $table->timestamp('inventory_checked_at')->nullable();
-
-            $table->text('inventory_check_notes')->nullable();
+            /*
+             * Date and time when the inventory was checked.
+             */
+            $table->timestamp('inventory_checked_at')
+                ->nullable();
 
             /*
-             * Owner's decision after inventory checking.
+             * Notes recorded during the inventory check.
+             */
+            $table->text('inventory_check_notes')
+                ->nullable();
+
+            /*
+             * Owner's decision after the inventory check.
              */
             $table->enum('owner_decision', [
                 'confirmed',
@@ -71,6 +99,9 @@ return new class extends Migration
                 'cancelled',
             ])->nullable();
 
+            /*
+             * Additional customer order notes.
+             */
             $table->text('notes')->nullable();
 
             /*
