@@ -135,7 +135,7 @@ class PurchaseOrderSeeder extends Seeder
             */
             [
                 'number' => 'PO-2026-0006',
-                'supplier' => 'Caltex Philippines',
+                'supplier' => 'Eastern Petroleum',
                 'customer_order' => null,
                 'date' => '2026-09-21',
                 'status' => 'cancelled',

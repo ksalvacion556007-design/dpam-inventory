@@ -25,8 +25,10 @@ class CategoryController extends Controller
 
         Category::create($validated);
 
+        // There is no separate Owner Products page anymore:
+        // product and category management live in Sales & Inventory.
         return redirect()
-            ->route('owner.products')
+            ->route('owner.sales-inventory', ['tab' => 'inventory'])
             ->with('success', 'Category added successfully.');
     }
 }

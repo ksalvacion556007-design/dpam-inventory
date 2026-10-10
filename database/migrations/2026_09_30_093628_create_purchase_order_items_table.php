@@ -19,15 +19,29 @@ return new class extends Migration
                 ->constrained('products')
                 ->restrictOnDelete();
 
-            // Quantity ordered from the supplier
+            /*
+             * Quantity ordered from supplier.
+             */
             $table->integer('quantity');
 
-            // Quantity actually received from the supplier
+            /*
+             * Quantity actually received from supplier.
+             *
+             * This changes only through the Stock In/receiving process.
+             */
             $table->integer('received_quantity')
                 ->default(0);
 
+            /*
+             * Actual supplier purchase cost for this PO.
+             *
+             * This is intentionally NOT stored in products.unit_price.
+             */
             $table->decimal('unit_cost', 12, 2);
 
+            /*
+             * quantity × unit_cost
+             */
             $table->decimal('subtotal', 12, 2);
 
             $table->timestamps();

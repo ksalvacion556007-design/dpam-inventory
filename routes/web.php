@@ -6,10 +6,9 @@ use App\Http\Controllers\Auth\LoginController;
 
 /*
 |--------------------------------------------------------------------------
-| ADMIN CONTROLLERS
+| ADMIN
 |--------------------------------------------------------------------------
 */
-
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AdminActivityLogController;
@@ -17,26 +16,22 @@ use App\Http\Controllers\Admin\AdminArchiveController;
 
 /*
 |--------------------------------------------------------------------------
-| OWNER CONTROLLERS
+| OWNER
 |--------------------------------------------------------------------------
 */
 use App\Http\Controllers\Owner\DashboardController;
-use App\Http\Controllers\Owner\ProductController;
 use App\Http\Controllers\Owner\CategoryController;
-use App\Http\Controllers\Owner\InventoryController;
+use App\Http\Controllers\Owner\SalesInventoryController;
 use App\Http\Controllers\Owner\SupplierController;
-use App\Http\Controllers\Owner\CustomerOrderController;
 use App\Http\Controllers\Owner\PurchaseOrderController;
-use App\Http\Controllers\Owner\StockCardController;
 use App\Http\Controllers\Owner\ReportController;
 use App\Http\Controllers\Owner\ArchiveController;
 
 /*
 |--------------------------------------------------------------------------
-| SECRETARY CONTROLLERS
+| SECRETARY
 |--------------------------------------------------------------------------
 */
-
 use App\Http\Controllers\Secretary\SecretaryDashboardController;
 use App\Http\Controllers\Secretary\SecretaryProductController;
 use App\Http\Controllers\Secretary\SecretaryInventoryController;
@@ -47,10 +42,9 @@ use App\Http\Controllers\Secretary\SecretaryArchiveController;
 
 /*
 |--------------------------------------------------------------------------
-| CASHIER CONTROLLERS
+| CASHIER
 |--------------------------------------------------------------------------
 */
-
 use App\Http\Controllers\Cashier\CashierDashboardController;
 use App\Http\Controllers\Cashier\CashierCustomerOrderController;
 use App\Http\Controllers\Cashier\CashierPaymentController;
@@ -60,7 +54,6 @@ use App\Http\Controllers\Cashier\CashierArchiveController;
 
 use App\Http\Middleware\EnsureUserIsActive;
 
-
 /*
 |--------------------------------------------------------------------------
 | PUBLIC
@@ -68,11 +61,8 @@ use App\Http\Middleware\EnsureUserIsActive;
 */
 
 Route::get('/', function () {
-
     return redirect()->route('login');
-
 });
-
 
 /*
 |--------------------------------------------------------------------------
@@ -82,18 +72,16 @@ Route::get('/', function () {
 
 Route::middleware('guest')->group(function () {
 
-    Route::get(
-        '/login',
-        [LoginController::class, 'showLogin']
-    )->name('login');
+    Route::get('/login', [
+        LoginController::class,
+        'showLogin',
+    ])->name('login');
 
-    Route::post(
-        '/login',
-        [LoginController::class, 'login']
-    )->name('login.submit');
-
+    Route::post('/login', [
+        LoginController::class,
+        'login',
+    ])->name('login.submit');
 });
-
 
 /*
 |--------------------------------------------------------------------------
@@ -101,12 +89,12 @@ Route::middleware('guest')->group(function () {
 |--------------------------------------------------------------------------
 */
 
-Route::post(
-    '/logout',
-    [LoginController::class, 'logout']
-)->middleware('auth')
-  ->name('logout');
-
+Route::post('/logout', [
+    LoginController::class,
+    'logout',
+])
+    ->middleware('auth')
+    ->name('logout');
 
 /*
 |--------------------------------------------------------------------------
@@ -115,7 +103,6 @@ Route::post(
 */
 
 Route::middleware('auth')->group(function () {
-
 
     /*
     |--------------------------------------------------------------------------
@@ -126,639 +113,488 @@ Route::middleware('auth')->group(function () {
     Route::get('/dashboard', function () {
 
         return match (auth()->user()->role) {
-
-            'admin' =>
-                redirect()->route('admin.dashboard'),
-
-            'owner' =>
-                redirect()->route('owner.dashboard'),
-
-            'secretary' =>
-                redirect()->route('secretary.dashboard'),
-
-            'cashier' =>
-                redirect()->route('cashier.dashboard'),
-
-            default =>
-                abort(403, 'Unauthorized role.'),
-
+            'admin' => redirect()->route('admin.dashboard'),
+            'owner' => redirect()->route('owner.dashboard'),
+            'secretary' => redirect()->route('secretary.dashboard'),
+            'cashier' => redirect()->route('cashier.dashboard'),
+            default => abort(403, 'Unauthorized role.'),
         };
 
     })->name('dashboard');
-
 
     /*
     |--------------------------------------------------------------------------
     | ADMIN
     |--------------------------------------------------------------------------
-    |
-    | Admin responsibilities:
-    |
-    | - Monitor system/account information
-    | - Manage user accounts
-    | - Assign system roles
-    | - Activate/deactivate users
-    | - View activity logs
-    | - View historical/inactive records
-    |
-    | Admin does NOT manage the operational inventory workflow.
-    |
     */
 
     Route::middleware([
         EnsureUserIsActive::class,
         'role:admin',
-    ])->prefix('admin')->name('admin.')->group(function () {
+    ])
+        ->prefix('admin')
+        ->name('admin.')
+        ->group(function () {
 
+            Route::get(
+                '/dashboard',
+                [AdminDashboardController::class, 'index']
+            )->name('dashboard');
 
-        /*
-        |--------------------------------------------------------------------------
-        | ADMIN - DASHBOARD
-        |--------------------------------------------------------------------------
-        */
+            Route::get(
+                '/users',
+                [AdminUserController::class, 'index']
+            )->name('users');
 
-        Route::get(
-            '/dashboard',
-            [AdminDashboardController::class, 'index']
-        )->name('dashboard');
+            Route::post(
+                '/users',
+                [AdminUserController::class, 'store']
+            )->name('users.store');
 
+            Route::put(
+                '/users/{user}',
+                [AdminUserController::class, 'update']
+            )->name('users.update');
 
-        /*
-        |--------------------------------------------------------------------------
-        | ADMIN - USER MANAGEMENT
-        |--------------------------------------------------------------------------
-        |
-        | Functions:
-        |
-        | - View users
-        | - Search users
-        | - Filter users
-        | - Create user
-        | - Edit user
-        | - Change role
-        | - Activate account
-        | - Deactivate account
-        | - Change/reset password
-        |
-        */
+            Route::patch(
+                '/users/{user}/activate',
+                [AdminUserController::class, 'activate']
+            )->name('users.activate');
 
-        Route::get(
-            '/users',
-            [AdminUserController::class, 'index']
-        )->name('users');
+            Route::patch(
+                '/users/{user}/deactivate',
+                [AdminUserController::class, 'deactivate']
+            )->name('users.deactivate');
 
-        Route::post(
-            '/users',
-            [AdminUserController::class, 'store']
-        )->name('users.store');
+            Route::get(
+                '/activity-logs',
+                [AdminActivityLogController::class, 'index']
+            )->name('activity-logs');
 
-        Route::put(
-            '/users/{user}',
-            [AdminUserController::class, 'update']
-        )->name('users.update');
-
-        Route::patch(
-            '/users/{user}/activate',
-            [AdminUserController::class, 'activate']
-        )->name('users.activate');
-
-        Route::patch(
-            '/users/{user}/deactivate',
-            [AdminUserController::class, 'deactivate']
-        )->name('users.deactivate');
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | ADMIN - ACTIVITY LOGS
-        |--------------------------------------------------------------------------
-        |
-        | Read-only system activity monitoring.
-        |
-        | Records may include:
-        |
-        | - Login/logout
-        | - User management
-        | - Inventory actions
-        | - Customer order actions
-        | - Purchase order actions
-        | - Payment actions
-        | - Other system actions
-        |
-        */
-
-        Route::get(
-            '/activity-logs',
-            [AdminActivityLogController::class, 'index']
-        )->name('activity-logs');
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | ADMIN - ARCHIVE
-        |--------------------------------------------------------------------------
-        |
-        | Read-only historical records.
-        |
-        | Includes:
-        |
-        | - Inactive user accounts
-        | - Historical activity records
-        |
-        | No delete operation is provided.
-        |
-        */
-
-        Route::get(
-            '/archive',
-            [AdminArchiveController::class, 'index']
-        )->name('archive');
-
-    });
-
+            Route::get(
+                '/archive',
+                [AdminArchiveController::class, 'index']
+            )->name('archive');
+        });
 
     /*
     |--------------------------------------------------------------------------
     | OWNER
     |--------------------------------------------------------------------------
     |
-    | Owner has full business authority.
+    | Owner has complete access to the operational system.
     |
-    | Owner responsibilities:
+    | Sales & Inventory combines:
+    | - customer orders
+    | - sales
+    | - cashiering
+    | - inventory
+    | - product management (Add Product, opening stock)
+    | - stock movement
+    | - payments
+    | - stock receiving
+    | - adjustments
+    | - customer returns
+    | - damaged stock
     |
-    | - Products
-    | - Inventory
-    | - Suppliers
-    | - Customer Orders
-    | - Purchase Orders
-    | - Stock Card
-    | - Reports
-    | - Archive
-    |
     */
 
+    Route::middleware([
+        EnsureUserIsActive::class,
+        'role:owner',
+    ])->group(function () {
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - DASHBOARD
-    |--------------------------------------------------------------------------
-    */
+        Route::get(
+            '/owner/dashboard',
+            [DashboardController::class, 'index']
+        )->name('owner.dashboard');
 
-    Route::get(
-        '/owner/dashboard',
-        [DashboardController::class, 'index']
-    )->name('owner.dashboard');
+        /*
+        |--------------------------------------------------------------------------
+        | SALES & INVENTORY
+        |--------------------------------------------------------------------------
+        */
 
+        Route::get(
+            '/owner/sales-inventory',
+            [SalesInventoryController::class, 'index']
+        )->name('owner.sales-inventory');
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - PRODUCTS
-    |--------------------------------------------------------------------------
-    */
+        /*
+        |--------------------------------------------------------------------------
+        | ADD PRODUCT (product master + suppliers + opening stock / batch)
+        |--------------------------------------------------------------------------
+        |
+        | There is no separate Owner Products page. Products are created
+        | from the Inventory tab of Sales & Inventory.
+        |
+        */
 
-    Route::get(
-        '/owner/products',
-        [ProductController::class, 'index']
-    )->name('owner.products');
+        Route::post(
+            '/owner/sales-inventory/products',
+            [SalesInventoryController::class, 'productStore']
+        )->name('owner.sales-inventory.product.store');
 
-    Route::post(
-        '/owner/products',
-        [ProductController::class, 'store']
-    )->name('owner.products.store');
+        Route::get(
+            '/owner/sales-inventory/products/{product}',
+            [SalesInventoryController::class, 'productInfo']
+        )->name('owner.sales-inventory.product-info');
 
-    Route::put(
-        '/owner/products/{product}',
-        [ProductController::class, 'update']
-    )->name('owner.products.update');
+        Route::post(
+            '/owner/sales-inventory/checkout',
+            [SalesInventoryController::class, 'checkout']
+        )->name('owner.sales-inventory.checkout');
 
-    Route::patch(
-        '/owner/products/{product}/archive',
-        [ProductController::class, 'archive']
-    )->name('owner.products.archive');
+        Route::post(
+            '/owner/sales-inventory/orders',
+            [SalesInventoryController::class, 'storeOrder']
+        )->name('owner.sales-inventory.order');
 
+        Route::post(
+            '/owner/sales-inventory/orders/{customerOrder}/release',
+            [SalesInventoryController::class, 'release']
+        )->name('owner.sales-inventory.release');
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - CATEGORIES
-    |--------------------------------------------------------------------------
-    */
+        Route::post(
+            '/owner/sales-inventory/orders/{customerOrder}/payment',
+            [SalesInventoryController::class, 'payment']
+        )->name('owner.sales-inventory.payment');
 
-    Route::post(
-        '/owner/categories',
-        [CategoryController::class, 'store']
-    )->name('owner.categories.store');
+        Route::post(
+            '/owner/sales-inventory/orders/{customerOrder}/recheck',
+            [SalesInventoryController::class, 'recheck']
+        )->name('owner.sales-inventory.recheck');
 
+        Route::post(
+            '/owner/sales-inventory/orders/{customerOrder}/confirm',
+            [SalesInventoryController::class, 'confirm']
+        )->name('owner.sales-inventory.confirm');
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - INVENTORY
-    |--------------------------------------------------------------------------
-    */
+        Route::post(
+            '/owner/sales-inventory/orders/{customerOrder}/cancel',
+            [SalesInventoryController::class, 'cancel']
+        )->name('owner.sales-inventory.cancel');
 
-    Route::get(
-        '/owner/inventory',
-        [InventoryController::class, 'index']
-    )->name('owner.inventory');
+        Route::post(
+            '/owner/sales-inventory/orders/{customerOrder}/void',
+            [SalesInventoryController::class, 'voidOrder']
+        )->name('owner.sales-inventory.void');
 
-    Route::post(
-        '/owner/inventory/stock-in',
-        [InventoryController::class, 'stockIn']
-    )->name('owner.inventory.stock-in');
+        /*
+        |--------------------------------------------------------------------------
+        | SUPPLIER DELIVERY / STOCK IN
+        |--------------------------------------------------------------------------
+        */
 
-    Route::post(
-        '/owner/inventory/stock-out',
-        [InventoryController::class, 'stockOut']
-    )->name('owner.inventory.stock-out');
+        Route::post(
+            '/owner/sales-inventory/stock-in',
+            [SalesInventoryController::class, 'stockIn']
+        )->name('owner.sales-inventory.stock-in');
 
-    Route::post(
-        '/owner/inventory/adjust',
-        [InventoryController::class, 'adjust']
-    )->name('owner.inventory.adjust');
+        /*
+        |--------------------------------------------------------------------------
+        | CUSTOMER RETURN
+        |--------------------------------------------------------------------------
+        */
 
+        Route::post(
+            '/owner/sales-inventory/return',
+            [SalesInventoryController::class, 'returnStock']
+        )->name('owner.sales-inventory.return');
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - SUPPLIERS
-    |--------------------------------------------------------------------------
-    */
+        /*
+        |--------------------------------------------------------------------------
+        | DAMAGED STOCK
+        |--------------------------------------------------------------------------
+        */
 
-    Route::get(
-        '/owner/suppliers',
-        [SupplierController::class, 'index']
-    )->name('owner.suppliers');
+        Route::post(
+            '/owner/sales-inventory/damage',
+            [SalesInventoryController::class, 'damageStock']
+        )->name('owner.sales-inventory.damage');
 
-    Route::post(
-        '/owner/suppliers',
-        [SupplierController::class, 'store']
-    )->name('owner.suppliers.store');
+        /*
+        |--------------------------------------------------------------------------
+        | PHYSICAL STOCK ADJUSTMENT
+        |--------------------------------------------------------------------------
+        */
 
-    Route::put(
-        '/owner/suppliers/{supplier}',
-        [SupplierController::class, 'update']
-    )->name('owner.suppliers.update');
+        Route::post(
+            '/owner/sales-inventory/adjust',
+            [SalesInventoryController::class, 'adjust']
+        )->name('owner.sales-inventory.adjust');
 
-    Route::patch(
-        '/owner/suppliers/{supplier}/archive',
-        [SupplierController::class, 'archive']
-    )->name('owner.suppliers.archive');
+        /*
+        |--------------------------------------------------------------------------
+        | OLD OWNER PAGES
+        |--------------------------------------------------------------------------
+        |
+        | These remain as redirects so older links/bookmarks do not break.
+        |
+        */
 
+        Route::get(
+            '/owner/inventory',
+            fn () => redirect()->route(
+                'owner.sales-inventory',
+                ['tab' => 'inventory']
+            )
+        )->name('owner.inventory');
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - CUSTOMER ORDERS
-    |--------------------------------------------------------------------------
-    */
+        Route::get(
+            '/owner/customer-orders',
+            fn () => redirect()->route(
+                'owner.sales-inventory',
+                ['tab' => 'orders']
+            )
+        )->name('owner.customer-orders');
 
-    Route::get(
-        '/owner/customer-orders',
-        [CustomerOrderController::class, 'index']
-    )->name('owner.customer-orders');
+        Route::get(
+            '/owner/stock-card',
+            fn () => redirect()->route(
+                'owner.sales-inventory',
+                ['tab' => 'history']
+            )
+        )->name('owner.stock-card');
 
-    Route::post(
-        '/owner/customer-orders',
-        [CustomerOrderController::class, 'store']
-    )->name('owner.customer-orders.store');
+        /*
+        |--------------------------------------------------------------------------
+        | CATEGORIES
+        |--------------------------------------------------------------------------
+        |
+        | Used by "+ Add Category" in the Add Product form.
+        | Redirects back to Sales & Inventory (Inventory tab).
+        |
+        */
 
-    Route::get(
-        '/owner/customer-orders/{customerOrder}',
-        [CustomerOrderController::class, 'show']
-    )->name('owner.customer-orders.show');
+        Route::post(
+            '/owner/categories',
+            [CategoryController::class, 'store']
+        )->name('owner.categories.store');
 
-    Route::patch(
-        '/owner/customer-orders/{customerOrder}/check-inventory',
-        [CustomerOrderController::class, 'checkInventory']
-    )->name('owner.customer-orders.check-inventory');
+        /*
+        |--------------------------------------------------------------------------
+        | SUPPLIERS
+        |--------------------------------------------------------------------------
+        */
 
-    Route::patch(
-        '/owner/customer-orders/{customerOrder}/decision',
-        [CustomerOrderController::class, 'ownerDecision']
-    )->name('owner.customer-orders.decision');
+        Route::get(
+            '/owner/suppliers',
+            [SupplierController::class, 'index']
+        )->name('owner.suppliers');
 
+        Route::post(
+            '/owner/suppliers',
+            [SupplierController::class, 'store']
+        )->name('owner.suppliers.store');
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - PURCHASE ORDERS
-    |--------------------------------------------------------------------------
-    */
+        Route::put(
+            '/owner/suppliers/{supplier}',
+            [SupplierController::class, 'update']
+        )->name('owner.suppliers.update');
 
-    Route::get(
-        '/owner/purchase-orders',
-        [PurchaseOrderController::class, 'index']
-    )->name('owner.purchase-orders');
+        Route::patch(
+            '/owner/suppliers/{supplier}/archive',
+            [SupplierController::class, 'archive']
+        )->name('owner.suppliers.archive');
 
-    Route::post(
-        '/owner/purchase-orders',
-        [PurchaseOrderController::class, 'store']
-    )->name('owner.purchase-orders.store');
+        /*
+        |--------------------------------------------------------------------------
+        | PURCHASE ORDERS
+        |--------------------------------------------------------------------------
+        |
+        | Workflow:
+        |   Draft   -> submit  -> Pending
+        |   Pending -> approve -> Approved   (does NOT change inventory)
+        |   Draft / Pending -> cancel -> Cancelled
+        |   Inventory increases only through
+        |   owner.sales-inventory.stock-in (actual supplier delivery).
+        |
+        | {purchaseOrder} is the numeric database id (route-model binding),
+        | not the PO number (e.g. PO-2026-0007).
+        |
+        */
 
-    Route::patch(
-        '/owner/purchase-orders/{purchaseOrder}/submit',
-        [PurchaseOrderController::class, 'submit']
-    )->name('owner.purchase-orders.submit');
+        Route::get(
+            '/owner/purchase-orders',
+            [PurchaseOrderController::class, 'index']
+        )->name('owner.purchase-orders');
 
-    Route::get(
-        '/owner/purchase-orders/{purchaseOrder}',
-        [PurchaseOrderController::class, 'show']
-    )->name('owner.purchase-orders.show');
+        Route::post(
+            '/owner/purchase-orders',
+            [PurchaseOrderController::class, 'store']
+        )->name('owner.purchase-orders.store');
 
-    Route::put(
-        '/owner/purchase-orders/{purchaseOrder}',
-        [PurchaseOrderController::class, 'update']
-    )->name('owner.purchase-orders.update');
+        Route::patch(
+            '/owner/purchase-orders/{purchaseOrder}/submit',
+            [PurchaseOrderController::class, 'submit']
+        )->name('owner.purchase-orders.submit');
 
-    Route::patch(
-        '/owner/purchase-orders/{purchaseOrder}/approve',
-        [PurchaseOrderController::class, 'approve']
-    )->name('owner.purchase-orders.approve');
+        Route::patch(
+            '/owner/purchase-orders/{purchaseOrder}/approve',
+            [PurchaseOrderController::class, 'approve']
+        )->name('owner.purchase-orders.approve');
 
-    Route::patch(
-        '/owner/purchase-orders/{purchaseOrder}/cancel',
-        [PurchaseOrderController::class, 'cancel']
-    )->name('owner.purchase-orders.cancel');
+        Route::patch(
+            '/owner/purchase-orders/{purchaseOrder}/cancel',
+            [PurchaseOrderController::class, 'cancel']
+        )->name('owner.purchase-orders.cancel');
 
+        /*
+        |--------------------------------------------------------------------------
+        | REPORTS
+        |--------------------------------------------------------------------------
+        */
 
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - STOCK CARD
-    |--------------------------------------------------------------------------
-    */
+        Route::get(
+            '/owner/reports',
+            [ReportController::class, 'index']
+        )->name('owner.reports');
 
-    Route::get(
-        '/owner/stock-card',
-        [StockCardController::class, 'index']
-    )->name('owner.stock-card');
+        /*
+        |--------------------------------------------------------------------------
+        | ARCHIVE
+        |--------------------------------------------------------------------------
+        */
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - REPORTS
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/owner/reports',
-        [ReportController::class, 'index']
-    )->name('owner.reports');
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | OWNER - ARCHIVE
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/owner/archive',
-        [ArchiveController::class, 'index']
-    )->name('owner.archive');
-
+        Route::get(
+            '/owner/archive',
+            [ArchiveController::class, 'index']
+        )->name('owner.archive');
+    });
 
     /*
     |--------------------------------------------------------------------------
     | SECRETARY
     |--------------------------------------------------------------------------
     |
-    | Secretary responsibilities:
-    |
-    | - Monitor inventory
-    | - View products
-    | - Perform inventory transactions
-    | - Check customer order availability
-    | - Monitor low/out-of-stock products
-    | - Report reorder needs to Owner
-    |
-    | Secretary does NOT:
-    |
-    | - Manage suppliers
-    | - Create Purchase Orders
-    | - Approve Purchase Orders
+    | Secretary retains operational inventory/order access.
+    | Owner does not depend on Secretary because Owner has the complete
+    | Sales & Inventory module above.
     |
     */
 
+    Route::middleware([
+        EnsureUserIsActive::class,
+        'role:secretary',
+    ])->prefix('secretary')->name('secretary.')->group(function () {
 
-    /*
-    |--------------------------------------------------------------------------
-    | SECRETARY - DASHBOARD
-    |--------------------------------------------------------------------------
-    */
+        Route::get(
+            '/dashboard',
+            [SecretaryDashboardController::class, 'index']
+        )->name('dashboard');
 
-    Route::get(
-        '/secretary/dashboard',
-        [SecretaryDashboardController::class, 'index']
-    )->name('secretary.dashboard');
+        Route::get(
+            '/products',
+            [SecretaryProductController::class, 'index']
+        )->name('products');
 
+        Route::get(
+            '/inventory',
+            [SecretaryInventoryController::class, 'index']
+        )->name('inventory');
 
-    /*
-    |--------------------------------------------------------------------------
-    | SECRETARY - PRODUCTS
-    |--------------------------------------------------------------------------
-    */
+        Route::post(
+            '/inventory/stock-in',
+            [SecretaryInventoryController::class, 'stockIn']
+        )->name('inventory.stock-in');
 
-    Route::get(
-        '/secretary/products',
-        [SecretaryProductController::class, 'index']
-    )->name('secretary.products');
+        Route::post(
+            '/inventory/stock-out',
+            [SecretaryInventoryController::class, 'stockOut']
+        )->name('inventory.stock-out');
 
+        Route::post(
+            '/inventory/adjust',
+            [SecretaryInventoryController::class, 'adjust']
+        )->name('inventory.adjust');
 
-    /*
-    |--------------------------------------------------------------------------
-    | SECRETARY - INVENTORY
-    |--------------------------------------------------------------------------
-    */
+        Route::get(
+            '/customer-orders',
+            [SecretaryCustomerOrderController::class, 'index']
+        )->name('customer-orders');
 
-    Route::get(
-        '/secretary/inventory',
-        [SecretaryInventoryController::class, 'index']
-    )->name('secretary.inventory');
+        Route::patch(
+            '/customer-orders/{customerOrder}/check-inventory',
+            [SecretaryCustomerOrderController::class, 'checkInventory']
+        )->name('customer-orders.check-inventory');
 
-    Route::post(
-        '/secretary/inventory/stock-in',
-        [SecretaryInventoryController::class, 'stockIn']
-    )->name('secretary.inventory.stock-in');
+        Route::get(
+            '/stock-card',
+            [SecretaryStockCardController::class, 'index']
+        )->name('stock-card');
 
-    Route::post(
-        '/secretary/inventory/stock-out',
-        [SecretaryInventoryController::class, 'stockOut']
-    )->name('secretary.inventory.stock-out');
+        Route::get(
+            '/reports',
+            [SecretaryReportController::class, 'index']
+        )->name('reports');
 
-    Route::post(
-        '/secretary/inventory/adjust',
-        [SecretaryInventoryController::class, 'adjust']
-    )->name('secretary.inventory.adjust');
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | SECRETARY - CUSTOMER ORDERS
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/secretary/customer-orders',
-        [SecretaryCustomerOrderController::class, 'index']
-    )->name('secretary.customer-orders');
-
-    Route::patch(
-        '/secretary/customer-orders/{customerOrder}/check-inventory',
-        [SecretaryCustomerOrderController::class, 'checkInventory']
-    )->name('secretary.customer-orders.check-inventory');
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | SECRETARY - STOCK CARD
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/secretary/stock-card',
-        [SecretaryStockCardController::class, 'index']
-    )->name('secretary.stock-card');
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | SECRETARY - REPORTS
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/secretary/reports',
-        [SecretaryReportController::class, 'index']
-    )->name('secretary.reports');
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | SECRETARY - ARCHIVE
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/secretary/archive',
-        [SecretaryArchiveController::class, 'index']
-    )->name('secretary.archive');
-
+        Route::get(
+            '/archive',
+            [SecretaryArchiveController::class, 'index']
+        )->name('archive');
+    });
 
     /*
     |--------------------------------------------------------------------------
     | CASHIER
     |--------------------------------------------------------------------------
     |
-    | Cashier / Accounting Staff responsibilities:
-    |
-    | - View relevant customer orders
-    | - Record payments and receipts
-    | - Maintain accounts receivable / ledger
-    | - Monitor credit / utang
-    | - Monitor checks and PDC
-    | - Prepare accounting-related reports
-    | - View historical accounting records
-    |
-    | Cashier does NOT:
-    |
-    | - Manage inventory
-    | - Manage suppliers
-    | - Create Purchase Orders
-    | - Approve Purchase Orders
-    | - Perform Stock In
-    | - Perform Stock Out
-    | - Perform inventory adjustments
+    | Cashier remains available for later payment/ledger work.
     |
     */
 
     Route::middleware([
         EnsureUserIsActive::class,
         'role:cashier',
-    ])->prefix('cashier')->name('cashier.')->group(function () {
+    ])
+        ->prefix('cashier')
+        ->name('cashier.')
+        ->group(function () {
 
+            Route::get(
+                '/dashboard',
+                [CashierDashboardController::class, 'index']
+            )->name('dashboard');
 
-        /*
-        |--------------------------------------------------------------------------
-        | CASHIER - DASHBOARD
-        |--------------------------------------------------------------------------
-        */
+            Route::get(
+                '/customer-orders',
+                [CashierCustomerOrderController::class, 'index']
+            )->name('customer-orders');
 
-        Route::get(
-            '/dashboard',
-            [CashierDashboardController::class, 'index']
-        )->name('dashboard');
+            Route::get(
+                '/customer-orders/{customerOrder}',
+                [CashierCustomerOrderController::class, 'show']
+            )->name('customer-orders.show');
 
+            Route::get(
+                '/payments',
+                [CashierPaymentController::class, 'index']
+            )->name('payments');
 
-        /*
-        |--------------------------------------------------------------------------
-        | CASHIER - CUSTOMER ORDERS
-        |--------------------------------------------------------------------------
-        */
+            Route::post(
+                '/payments',
+                [CashierPaymentController::class, 'store']
+            )->name('payments.store');
 
-        Route::get(
-            '/customer-orders',
-            [CashierCustomerOrderController::class, 'index']
-        )->name('customer-orders');
+            Route::get(
+                '/ledger',
+                [CashierLedgerController::class, 'index']
+            )->name('ledger');
 
-        Route::get(
-            '/customer-orders/{customerOrder}',
-            [CashierCustomerOrderController::class, 'show']
-        )->name('customer-orders.show');
+            Route::get(
+                '/ledger/{customerOrder}',
+                [CashierLedgerController::class, 'show']
+            )->name('ledger.show');
 
+            Route::get(
+                '/reports',
+                [CashierReportController::class, 'index']
+            )->name('reports');
 
-        /*
-        |--------------------------------------------------------------------------
-        | CASHIER - PAYMENTS
-        |--------------------------------------------------------------------------
-        */
-
-        Route::get(
-            '/payments',
-            [CashierPaymentController::class, 'index']
-        )->name('payments');
-
-        Route::post(
-            '/payments',
-            [CashierPaymentController::class, 'store']
-        )->name('payments.store');
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | CASHIER - ACCOUNTS RECEIVABLE / LEDGER
-        |--------------------------------------------------------------------------
-        */
-
-        Route::get(
-            '/ledger',
-            [CashierLedgerController::class, 'index']
-        )->name('ledger');
-
-        Route::get(
-            '/ledger/{customerOrder}',
-            [CashierLedgerController::class, 'show']
-        )->name('ledger.show');
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | CASHIER - REPORTS
-        |--------------------------------------------------------------------------
-        */
-
-        Route::get(
-            '/reports',
-            [CashierReportController::class, 'index']
-        )->name('reports');
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | CASHIER - ARCHIVE
-        |--------------------------------------------------------------------------
-        */
-
-        Route::get(
-            '/archive',
-            [CashierArchiveController::class, 'index']
-        )->name('archive');
-
-    });
-
+            Route::get(
+                '/archive',
+                [CashierArchiveController::class, 'index']
+            )->name('archive');
+        });
 });

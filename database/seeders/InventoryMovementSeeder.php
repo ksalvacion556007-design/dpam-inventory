@@ -21,14 +21,19 @@ class InventoryMovementSeeder extends Seeder
             ->pluck('id', 'product_name');
 
         /*
-         * Each movement is processed in order.
-         * Inventory current_stock is updated together
-         * with the movement so the Stock Card balance
-         * remains consistent.
-         */
+        |--------------------------------------------------------------------------
+        | MOVEMENTS
+        |--------------------------------------------------------------------------
+        */
 
         $movements = [
-            // Shell Rimula R4 X
+
+            /*
+            |--------------------------------------------------------------------------
+            | SHELL RIMULA R4 X
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Shell Rimula R4 X',
                 'type' => 'stock_in',
@@ -39,6 +44,7 @@ class InventoryMovementSeeder extends Seeder
                 'reason' => 'Supplier delivery',
                 'reference' => 'PO-2026-0001',
             ],
+
             [
                 'product' => 'Shell Rimula R4 X',
                 'type' => 'stock_out',
@@ -52,7 +58,12 @@ class InventoryMovementSeeder extends Seeder
                 'received_by' => 'Juan Dela Cruz',
             ],
 
-            // Mobil Delvac MX
+            /*
+            |--------------------------------------------------------------------------
+            | MOBIL DELVAC MX
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Mobil Delvac MX',
                 'type' => 'stock_in',
@@ -63,6 +74,7 @@ class InventoryMovementSeeder extends Seeder
                 'reason' => 'Supplier delivery',
                 'reference' => 'PO-2026-0003',
             ],
+
             [
                 'product' => 'Mobil Delvac MX',
                 'type' => 'stock_out',
@@ -76,7 +88,31 @@ class InventoryMovementSeeder extends Seeder
                 'received_by' => 'Pedro Santos',
             ],
 
-            // Caltex Delo Gold
+            /*
+            |--------------------------------------------------------------------------
+            | MOBIL RETURN
+            |--------------------------------------------------------------------------
+            */
+
+            [
+                'product' => 'Mobil Delvac MX',
+                'type' => 'return',
+                'date' => '2026-09-10',
+                'quantity' => 2,
+                'party' => 'Davao Equipment Services',
+                'price' => 380,
+                'reason' => 'Customer return - unopened and resalable',
+                'order' => 'CO-2026-0002',
+                'receipt' => 'OR-2026-0002',
+                'reference' => 'RET-2026-0001',
+            ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | CALTEX DELO GOLD
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Caltex Delo Gold',
                 'type' => 'stock_in',
@@ -87,6 +123,7 @@ class InventoryMovementSeeder extends Seeder
                 'reason' => 'Supplier delivery',
                 'reference' => 'PO-2026-0002',
             ],
+
             [
                 'product' => 'Caltex Delo Gold',
                 'type' => 'stock_out',
@@ -100,7 +137,22 @@ class InventoryMovementSeeder extends Seeder
                 'received_by' => 'Maria Garcia',
             ],
 
-            // Shell Helix HX5
+            [
+                'product' => 'Caltex Delo Gold',
+                'type' => 'damaged',
+                'date' => '2026-09-22',
+                'quantity' => -3,
+                'party' => null,
+                'reason' => 'Damaged containers discovered during inventory inspection',
+                'reference' => 'DMG-2026-0001',
+            ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | SHELL HELIX HX5
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Shell Helix HX5',
                 'type' => 'stock_in',
@@ -111,6 +163,7 @@ class InventoryMovementSeeder extends Seeder
                 'reason' => 'Supplier delivery',
                 'reference' => 'PO-2026-0001',
             ],
+
             [
                 'product' => 'Shell Helix HX5',
                 'type' => 'stock_out',
@@ -124,7 +177,12 @@ class InventoryMovementSeeder extends Seeder
                 'received_by' => 'Jose Reyes',
             ],
 
-            // Petron
+            /*
+            |--------------------------------------------------------------------------
+            | PETRON
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Petron Rev-X',
                 'type' => 'stock_in',
@@ -136,7 +194,12 @@ class InventoryMovementSeeder extends Seeder
                 'reference' => 'PO-2026-0004',
             ],
 
-            // Hydraulic Oil
+            /*
+            |--------------------------------------------------------------------------
+            | HYDRAULIC OIL
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Hydraulic Oil ISO 46',
                 'type' => 'stock_in',
@@ -148,7 +211,12 @@ class InventoryMovementSeeder extends Seeder
                 'reference' => 'PO-2026-0005',
             ],
 
-            // Gear Oil
+            /*
+            |--------------------------------------------------------------------------
+            | GEAR OIL
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Gear Oil 80W-90',
                 'type' => 'stock_in',
@@ -159,6 +227,7 @@ class InventoryMovementSeeder extends Seeder
                 'reason' => 'Supplier delivery',
                 'reference' => 'PO-2026-0006',
             ],
+
             [
                 'product' => 'Gear Oil 80W-90',
                 'type' => 'adjustment',
@@ -169,7 +238,12 @@ class InventoryMovementSeeder extends Seeder
                 'reference' => 'Count Sheet - September 2026',
             ],
 
-            // Grease
+            /*
+            |--------------------------------------------------------------------------
+            | LITHIUM GREASE
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Lithium Grease EP2',
                 'type' => 'stock_in',
@@ -181,7 +255,12 @@ class InventoryMovementSeeder extends Seeder
                 'reference' => 'PO-2026-0007',
             ],
 
-            // Coolant
+            /*
+            |--------------------------------------------------------------------------
+            | COOLANT
+            |--------------------------------------------------------------------------
+            */
+
             [
                 'product' => 'Long Life Coolant',
                 'type' => 'stock_in',
@@ -192,71 +271,215 @@ class InventoryMovementSeeder extends Seeder
                 'reason' => 'Supplier delivery',
                 'reference' => 'PO-2026-0008',
             ],
+
+            [
+                'product' => 'Long Life Coolant',
+                'type' => 'damaged',
+                'date' => '2026-09-23',
+                'quantity' => -1,
+                'party' => null,
+                'reason' => 'Container damaged and item is no longer usable',
+                'reference' => 'DMG-2026-0002',
+            ],
         ];
 
         /*
-         * Initialize all inventory records.
-         */
+        |--------------------------------------------------------------------------
+        | RESET INVENTORY
+        |--------------------------------------------------------------------------
+        */
+
         DB::table('inventories')->update([
             'current_stock' => 0,
             'updated_at' => now(),
         ]);
 
         /*
-         * Process movements one by one.
-         */
+        |--------------------------------------------------------------------------
+        | CLEAR MOVEMENTS
+        |--------------------------------------------------------------------------
+        |
+        | migrate:fresh already clears these, but this makes the seeder
+        | safe if it is run independently during development.
+        |
+        */
+
+        DB::table('inventory_movements')->delete();
+
+        /*
+        |--------------------------------------------------------------------------
+        | PROCESS MOVEMENTS IN ORDER
+        |--------------------------------------------------------------------------
+        */
+
         foreach ($movements as $movement) {
 
-            $productId = $products[$movement['product']];
+            $productId =
+                $products[$movement['product']]
+                ?? null;
 
-            $inventory = DB::table('inventories')
-                ->where('product_id', $productId)
-                ->first();
+            if (!$productId) {
+                $this->command->warn(
+                    "Product '{$movement['product']}' not found. Movement skipped."
+                );
 
-            $stockBefore = (int) $inventory->current_stock;
+                continue;
+            }
 
-            $quantity = (int) $movement['quantity'];
+            $inventory =
+                DB::table('inventories')
+                    ->where(
+                        'product_id',
+                        $productId
+                    )
+                    ->first();
 
-            $stockAfter = $stockBefore + $quantity;
+            if (!$inventory) {
+                DB::table('inventories')->insert([
+                    'product_id' =>
+                        $productId,
 
-            $unitCost = $movement['cost'] ?? null;
-            $unitPrice = $movement['price'] ?? null;
+                    'current_stock' =>
+                        0,
 
-            $amount = $unitPrice !== null
-                ? abs($quantity) * $unitPrice
-                : null;
+                    'created_at' =>
+                        now(),
 
-            $userId = $movement['type'] === 'stock_in'
-                ? $owner
-                : $secretary;
-
-            DB::table('inventories')
-                ->where('product_id', $productId)
-                ->update([
-                    'current_stock' => $stockAfter,
-                    'updated_at' => now(),
+                    'updated_at' =>
+                        now(),
                 ]);
 
-            DB::table('inventory_movements')->insert([
-                'product_id' => $productId,
-                'user_id' => $userId,
-                'movement_type' => $movement['type'],
-                'transaction_date' => $movement['date'],
-                'quantity' => $quantity,
-                'stock_before' => $stockBefore,
-                'stock_after' => $stockAfter,
-                'supplier_customer' => $movement['party'] ?? null,
-                'unit_cost' => $unitCost,
-                'unit_price' => $unitPrice,
-                'amount' => $amount,
-                'reason' => $movement['reason'] ?? null,
-                'customer_order_reference' => $movement['order'] ?? null,
-                'receipt_number' => $movement['receipt'] ?? null,
-                'received_by' => $movement['received_by'] ?? null,
-                'reference' => $movement['reference'] ?? null,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+                $inventory =
+                    DB::table('inventories')
+                        ->where(
+                            'product_id',
+                            $productId
+                        )
+                        ->first();
+            }
+
+            $stockBefore =
+                (int) $inventory->current_stock;
+
+            $quantity =
+                (int) $movement['quantity'];
+
+            $stockAfter =
+                $stockBefore + $quantity;
+
+            /*
+            |--------------------------------------------------------------------------
+            | PREVENT NEGATIVE STOCK
+            |--------------------------------------------------------------------------
+            */
+
+            if ($stockAfter < 0) {
+                $this->command->warn(
+                    "Movement {$movement['type']} for {$movement['product']} would create negative stock. Movement skipped."
+                );
+
+                continue;
+            }
+
+            $unitCost =
+                $movement['cost']
+                ?? null;
+
+            $unitPrice =
+                $movement['price']
+                ?? null;
+
+            $amount =
+                $unitPrice !== null
+                    ? abs($quantity) * $unitPrice
+                    : null;
+
+            $userId =
+                in_array(
+                    $movement['type'],
+                    [
+                        'stock_in',
+                    ],
+                    true
+                )
+                    ? $owner
+                    : $secretary;
+
+            DB::table('inventories')
+                ->where(
+                    'product_id',
+                    $productId
+                )
+                ->update([
+                    'current_stock' =>
+                        $stockAfter,
+
+                    'updated_at' =>
+                        now(),
+                ]);
+
+            DB::table('inventory_movements')
+                ->insert([
+                    'product_id' =>
+                        $productId,
+
+                    'user_id' =>
+                        $userId,
+
+                    'movement_type' =>
+                        $movement['type'],
+
+                    'transaction_date' =>
+                        $movement['date'],
+
+                    'quantity' =>
+                        $quantity,
+
+                    'stock_before' =>
+                        $stockBefore,
+
+                    'stock_after' =>
+                        $stockAfter,
+
+                    'supplier_customer' =>
+                        $movement['party']
+                        ?? null,
+
+                    'unit_cost' =>
+                        $unitCost,
+
+                    'unit_price' =>
+                        $unitPrice,
+
+                    'amount' =>
+                        $amount,
+
+                    'reason' =>
+                        $movement['reason']
+                        ?? null,
+
+                    'customer_order_reference' =>
+                        $movement['order']
+                        ?? null,
+
+                    'receipt_number' =>
+                        $movement['receipt']
+                        ?? null,
+
+                    'received_by' =>
+                        $movement['received_by']
+                        ?? null,
+
+                    'reference' =>
+                        $movement['reference']
+                        ?? null,
+
+                    'created_at' =>
+                        now(),
+
+                    'updated_at' =>
+                        now(),
+                ]);
         }
     }
 }

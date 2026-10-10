@@ -10,8 +10,10 @@ use App\Models\InventoryMovement;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\PurchaseOrder;
+use App\Models\PurchaseRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class SecretaryInventoryController extends Controller
@@ -27,9 +29,11 @@ class SecretaryInventoryController extends Controller
     | - Stock In actual supplier deliveries
     | - Stock Out actual customer deliveries
     | - Adjust physical stock
+    | - Request a purchase for low / out-of-stock products
     |
     | Customer Orders do NOT reduce physical inventory.
     | Purchase Orders do NOT increase physical inventory.
+    | Purchase Requests do NOT create Purchase Orders or change inventory.
     |
     */
 
@@ -158,6 +162,24 @@ class SecretaryInventoryController extends Controller
 
         /*
         |--------------------------------------------------------------------------
+        | PRODUCTS WITH A PENDING PURCHASE REQUEST
+        |--------------------------------------------------------------------------
+        |
+        | Used to show "Request Pending" instead of the Request Purchase
+        | button, so the same product is not requested twice.
+        |
+        */
+
+        $pendingRequestProductIds = PurchaseRequest::where(
+            'status',
+            'pending'
+        )
+            ->pluck('product_id')
+            ->all();
+
+
+        /*
+        |--------------------------------------------------------------------------
         | SEND DATA TO VIEW
         |--------------------------------------------------------------------------
         */
@@ -169,9 +191,184 @@ class SecretaryInventoryController extends Controller
                 'movements',
                 'customerOrders',
                 'payments',
-                'purchaseOrders'
+                'purchaseOrders',
+                'pendingRequestProductIds'
             )
         );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | REQUEST PURCHASE
+    |--------------------------------------------------------------------------
+    |
+    | Secretary reports a low / out-of-stock product to the Owner.
+    |
+    | Secretary → Purchase Request → Owner
+    |
+    | This does NOT:
+    | - create a Purchase Order
+    | - change inventory
+    |
+    | Current stock and reorder level are re-read from the database
+    | instead of trusting the form.
+    |
+    */
+
+    public function requestPurchase(Request $request)
+    {
+        $validated = $request->validate([
+            'product_id' => [
+                'required',
+                'integer',
+                'exists:products,id',
+            ],
+
+            'requested_quantity' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
+
+            'reason' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+
+            'notes' => [
+                'nullable',
+                'string',
+                'max:1000',
+            ],
+        ]);
+
+
+        DB::transaction(function () use ($validated) {
+
+            /*
+            |--------------------------------------------------------------------------
+            | GET PRODUCT
+            |--------------------------------------------------------------------------
+            */
+
+            $product = Product::with('inventory')
+                ->lockForUpdate()
+                ->findOrFail(
+                    $validated['product_id']
+                );
+
+
+            if ($product->status !== 'active') {
+                throw ValidationException::withMessages([
+                    'product_id' =>
+                        'Only active products can be requested for purchase.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | VERIFY PRODUCT IS LOW / OUT OF STOCK
+            |--------------------------------------------------------------------------
+            */
+
+            $currentStock = (int) (
+                $product->inventory?->current_stock ?? 0
+            );
+
+            $reorderLevel = (int) (
+                $product->reorder_level ?? 0
+            );
+
+
+            if ($currentStock > $reorderLevel) {
+                throw ValidationException::withMessages([
+                    'product_id' =>
+                        'Only Low Stock or Out of Stock products can be requested for purchase.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | PREVENT DUPLICATE PENDING REQUEST
+            |--------------------------------------------------------------------------
+            */
+
+            $hasPendingRequest = PurchaseRequest::where(
+                'product_id',
+                $product->id
+            )
+                ->where('status', 'pending')
+                ->exists();
+
+
+            if ($hasPendingRequest) {
+                throw ValidationException::withMessages([
+                    'product_id' =>
+                        'This product already has a pending Purchase Request.',
+                ]);
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | CREATE PURCHASE REQUEST
+            |--------------------------------------------------------------------------
+            */
+
+            $purchaseRequest = PurchaseRequest::create([
+                'request_number' =>
+                    'TEMP-' . Str::uuid(),
+
+                'product_id' =>
+                    $product->id,
+
+                'requested_by' =>
+                    auth()->id(),
+
+                'current_stock' =>
+                    $currentStock,
+
+                'reorder_level' =>
+                    $reorderLevel,
+
+                'requested_quantity' =>
+                    (int) $validated['requested_quantity'],
+
+                'reason' =>
+                    $validated['reason'],
+
+                'notes' =>
+                    $validated['notes'] ?? null,
+
+                'status' =>
+                    'pending',
+            ]);
+
+
+            /*
+             * Generate permanent request number.
+             */
+
+            $purchaseRequest->update([
+                'request_number' => sprintf(
+                    'PR-%d-%04d',
+                    now()->year,
+                    $purchaseRequest->id
+                ),
+            ]);
+        });
+
+
+        return redirect()
+            ->route('secretary.inventory')
+            ->with(
+                'success',
+                'Purchase Request submitted to the Owner. Inventory was not changed.'
+            );
     }
 
 

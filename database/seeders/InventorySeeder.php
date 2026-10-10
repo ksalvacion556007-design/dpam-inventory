@@ -9,7 +9,8 @@ class InventorySeeder extends Seeder
 {
     public function run(): void
     {
-        $products = DB::table('products')->pluck('id');
+        $products = DB::table('products')
+            ->pluck('id');
 
         foreach ($products as $productId) {
             DB::table('inventories')->insert([

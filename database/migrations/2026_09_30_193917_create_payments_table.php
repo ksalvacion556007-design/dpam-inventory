@@ -20,7 +20,11 @@ return new class extends Migration
                 ->constrained('users')
                 ->nullOnDelete();
 
-            $table->string('receipt_number')->unique();
+            /*
+             * Every payment/receipt gets a unique receipt number.
+             */
+            $table->string('receipt_number')
+                ->unique();
 
             $table->date('payment_date');
 
@@ -36,6 +40,22 @@ return new class extends Migration
 
             $table->decimal('amount', 12, 2);
 
+            /*
+             * paid:
+             *     Cash and completed electronic payments.
+             *
+             * pending:
+             *     Check/PDC awaiting clearing.
+             *
+             * cleared:
+             *     Previously pending payment that cleared.
+             *
+             * unpaid:
+             *     Credit/utang.
+             *
+             * voided:
+             *     Payment cancelled through a void operation.
+             */
             $table->enum('status', [
                 'paid',
                 'pending',
@@ -44,17 +64,23 @@ return new class extends Migration
                 'voided',
             ])->default('paid');
 
-            $table->string('reference_number')->nullable();
+            $table->string('reference_number')
+                ->nullable();
 
-            $table->string('check_number')->nullable();
+            $table->string('check_number')
+                ->nullable();
 
-            $table->string('bank_name')->nullable();
+            $table->string('bank_name')
+                ->nullable();
 
-            $table->date('check_date')->nullable();
+            $table->date('check_date')
+                ->nullable();
 
-            $table->date('maturity_date')->nullable();
+            $table->date('maturity_date')
+                ->nullable();
 
-            $table->text('notes')->nullable();
+            $table->text('notes')
+                ->nullable();
 
             $table->timestamps();
         });

@@ -4,331 +4,533 @@ namespace App\Http\Controllers\Owner;
 
 use App\Http\Controllers\Controller;
 use App\Models\CustomerOrder;
-use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\Product;
 use App\Models\PurchaseOrder;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class ReportController extends Controller
 {
-    /**
-     * Display the Owner Reports page.
-     */
     public function index(Request $request)
     {
+        $validated = $request->validate([
+            'date_from'  => ['nullable', 'date'],
+            'date_to'    => ['nullable', 'date', 'after_or_equal:date_from'],
+            'product_id' => ['nullable', 'integer', 'exists:products,id'],
+        ]);
+
+        $dateFrom = $validated['date_from'] ?? null;
+        $dateTo = $validated['date_to'] ?? null;
+
+        $productId = isset($validated['product_id'])
+            ? (int) $validated['product_id']
+            : null;
+
         /*
         |--------------------------------------------------------------------------
-        | Date Filters
+        | INVENTORY STATUS
+        |--------------------------------------------------------------------------
+        */
+
+        $activeProducts = Product::with([
+                'category',
+                'inventory',
+            ])
+            ->where('status', 'active')
+            ->orderBy('product_name')
+            ->get();
+
+        $inventory = $activeProducts->map(function ($product) {
+
+            $stock = (int) ($product->inventory->current_stock ?? 0);
+            $reorder = (int) $product->reorder_level;
+            $price = (float) $product->unit_price;
+
+            return [
+                'product_id'    => $product->id,
+                'product_name'  => $product->product_name,
+                'brand'         => $product->brand,
+                'category'      => $product->category->category_name ?? null,
+                'unit'          => $product->unit,
+                'current_stock' => $stock,
+                'reorder_level' => $reorder,
+                'unit_price'    => $price,
+                'amount'        => $stock * $price,
+
+                'status' => $stock <= 0
+                    ? 'Out of Stock'
+                    : ($stock <= $reorder
+                        ? 'Low Stock'
+                        : 'In Stock'),
+            ];
+        })->values();
+
+        $totalProducts = $inventory->count();
+
+        $totalInventoryQuantity = $inventory->sum('current_stock');
+
+        $totalInventoryValue = $inventory->sum('amount');
+
+        /*
+        |--------------------------------------------------------------------------
+        | STOCK CARD
         |--------------------------------------------------------------------------
         |
-        | Reports can be filtered by transaction date.
+        | IMPORTANT:
+        |
+        | Stock Card is product-specific.
+        |
+        | If no product is selected, no stock-card rows are generated.
+        |
+        | The complete history of the selected product is replayed first.
+        | Only after the running balance is calculated do we apply the
+        | selected date range.
         |
         */
 
-        $dateFrom = $request->input('date_from');
-        $dateTo = $request->input('date_to');
+        $stockCard = collect();
 
-        /*
-        |--------------------------------------------------------------------------
-        | Inventory Summary
-        |--------------------------------------------------------------------------
-        */
+        if ($productId) {
 
-        $totalProducts = Product::where('status', 'active')->count();
+            $movements = InventoryMovement::with([
+                    'product',
+                    'user',
+                ])
+                ->where('product_id', $productId)
+                ->orderBy('transaction_date')
+                ->orderBy('id')
+                ->get();
 
-        $totalInventoryQuantity = Inventory::whereHas('product', function ($query) {
-            $query->where('status', 'active');
-        })->sum('current_stock');
+            $running = 0;
 
-        $totalInventoryValue = Inventory::whereHas('product', function ($query) {
-            $query->where('status', 'active');
-        })
-            ->join('products', 'inventories.product_id', '=', 'products.id')
-            ->selectRaw('COALESCE(SUM(inventories.current_stock * products.unit_price), 0) as total')
-            ->value('total');
+            foreach ($movements as $movement) {
 
-        /*
-        |--------------------------------------------------------------------------
-        | Low Stock / Out of Stock
-        |--------------------------------------------------------------------------
-        */
+                $date = $movement->transaction_date
+                    ?: $movement->created_at;
 
-        $outOfStockCount = Inventory::whereHas('product', function ($query) {
-            $query->where('status', 'active');
-        })
-            ->where('current_stock', '<=', 0)
-            ->count();
+                $dateKey = $date
+                    ? $date->format('Y-m-d')
+                    : null;
 
-        $lowStockCount = Inventory::whereHas('product', function ($query) {
-            $query->where('status', 'active');
-        })
-            ->join('products', 'inventories.product_id', '=', 'products.id')
-            ->where('inventories.current_stock', '>', 0)
-            ->whereColumn(
-                'inventories.current_stock',
-                '<=',
-                'products.reorder_level'
-            )
-            ->count();
+                $type = (string) $movement->movement_type;
 
-        /*
-        |--------------------------------------------------------------------------
-        | Stock In / Stock Out Summary
-        |--------------------------------------------------------------------------
-        */
+                $quantity = (int) $movement->quantity;
 
-        $stockInQuery = InventoryMovement::where('movement_type', 'stock_in');
+                /*
+                |--------------------------------------------------------------------------
+                | OPENING BALANCE
+                |--------------------------------------------------------------------------
+                |
+                | Opening Stock establishes the initial balance.
+                |
+                | It is NOT counted as Stock In.
+                |
+                | Example:
+                |
+                | Opening Stock = 100
+                |
+                | Date | Beginning | In | Out | Remaining
+                |      |     100   | 0  |  0  |    100
+                |
+                */
 
-        $stockOutQuery = InventoryMovement::where('movement_type', 'stock_out');
+                $isOpening =
+                    $type === 'opening_balance'
+                    ||
+                    (
+                        $type === 'stock_in'
+                        && str_contains(
+                            strtolower((string) $movement->reason),
+                            'opening'
+                        )
+                    );
 
-        if ($dateFrom) {
-            $stockInQuery->whereDate('transaction_date', '>=', $dateFrom);
-            $stockOutQuery->whereDate('transaction_date', '>=', $dateFrom);
+                if ($isOpening) {
+
+                    /*
+                    | Prefer stock_after because it represents the actual
+                    | resulting inventory balance.
+                    */
+                    $openingBalance = (int) $movement->stock_after;
+
+                    /*
+                    | Fallback for older records where stock_after may be 0.
+                    */
+                    if ($openingBalance === 0 && $quantity !== 0) {
+                        $openingBalance = abs($quantity);
+                    }
+
+                    $running = max(0, $openingBalance);
+
+                    $stockCard->push([
+                        'm' => $movement,
+
+                        'date' => $date,
+
+                        'date_key' => $dateKey,
+
+                        'product_id' => (int) $movement->product_id,
+
+                        'product_name' =>
+                            $movement->product->product_name ?? '—',
+
+                        'brand' =>
+                            $movement->product->brand ?? null,
+
+                        'unit' =>
+                            $movement->product->unit ?? null,
+
+                        'begin' => $running,
+
+                        'in' => 0,
+
+                        'out' => 0,
+
+                        'remain' => $running,
+                    ]);
+
+                    continue;
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | NORMAL MOVEMENT
+                |--------------------------------------------------------------------------
+                */
+
+                $begin = $running;
+
+                $stockIn = 0;
+
+                $stockOut = 0;
+
+                /*
+                |--------------------------------------------------------------------------
+                | SUPPLIER DELIVERY
+                |--------------------------------------------------------------------------
+                */
+
+                if ($type === 'stock_in') {
+
+                    $stockIn = abs($quantity);
+
+                    $running += $stockIn;
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | CUSTOMER RELEASE / SALE
+                |--------------------------------------------------------------------------
+                */
+
+                elseif ($type === 'stock_out') {
+
+                    $stockOut = abs($quantity);
+
+                    $running -= $stockOut;
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | RETURNS
+                |--------------------------------------------------------------------------
+                |
+                | A restockable return increases usable inventory.
+                | For the six-column Stock Card it is treated as Stock In.
+                |
+                */
+
+                elseif ($type === 'return') {
+
+                    $stockIn = abs($quantity);
+
+                    $running += $stockIn;
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | DAMAGED
+                |--------------------------------------------------------------------------
+                |
+                | Damaged items leave usable inventory.
+                | For the six-column Stock Card it is treated as Stock Out.
+                |
+                */
+
+                elseif ($type === 'damaged') {
+
+                    $stockOut = abs($quantity);
+
+                    $running -= $stockOut;
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | ADJUSTMENTS / REVERSALS
+                |--------------------------------------------------------------------------
+                |
+                | These retain their signed quantity.
+                |
+                */
+
+                else {
+
+                    $running += $quantity;
+                }
+
+                /*
+                | Prevent negative displayed inventory.
+                */
+                $running = max(0, $running);
+
+                $stockCard->push([
+                    'm' => $movement,
+
+                    'date' => $date,
+
+                    'date_key' => $dateKey,
+
+                    'product_id' => (int) $movement->product_id,
+
+                    'product_name' =>
+                        $movement->product->product_name ?? '—',
+
+                    'brand' =>
+                        $movement->product->brand ?? null,
+
+                    'unit' =>
+                        $movement->product->unit ?? null,
+
+                    'begin' => $begin,
+
+                    'in' => $stockIn,
+
+                    'out' => $stockOut,
+
+                    'remain' => $running,
+                ]);
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | APPLY DATE FILTER AFTER REPLAYING HISTORY
+            |--------------------------------------------------------------------------
+            |
+            | This is important.
+            |
+            | Example:
+            |
+            | Opening = 100
+            | Oct 1  Stock Out = 20
+            | Oct 5  Stock In  = 50
+            |
+            | If user selects Oct 5 only:
+            |
+            | Beginning Balance = 80
+            | Stock In = 50
+            | Remaining = 130
+            |
+            | We must NOT reset the balance to zero on Oct 5.
+            |
+            */
+
+            $stockCard = $stockCard
+                ->filter(function ($row) use ($dateFrom, $dateTo) {
+
+                    if (!$row['date_key']) {
+                        return !$dateFrom && !$dateTo;
+                    }
+
+                    if ($dateFrom && $row['date_key'] < $dateFrom) {
+                        return false;
+                    }
+
+                    if ($dateTo && $row['date_key'] > $dateTo) {
+                        return false;
+                    }
+
+                    return true;
+                })
+                ->values();
         }
 
-        if ($dateTo) {
-            $stockInQuery->whereDate('transaction_date', '<=', $dateTo);
-            $stockOutQuery->whereDate('transaction_date', '<=', $dateTo);
-        }
-
-        $totalStockInQuantity = (clone $stockInQuery)->sum('quantity');
-
-        $totalStockOutQuantity = abs(
-            (clone $stockOutQuery)->sum('quantity')
-        );
-
-        $totalStockInAmount = (clone $stockInQuery)
-            ->sum('amount');
-
-        $totalStockOutAmount = (clone $stockOutQuery)
-            ->sum('amount');
-
         /*
         |--------------------------------------------------------------------------
-        | Inventory Report
+        | STOCK MOVEMENT TOTALS
         |--------------------------------------------------------------------------
-        |
-        | Current inventory list.
-        |
         */
 
-        $inventoryQuery = Inventory::with('product.category')
-            ->whereHas('product', function ($query) {
-                $query->where('status', 'active');
+        $totalStockInQuantity = $stockCard->sum('in');
+
+        $totalStockOutQuantity = $stockCard->sum('out');
+
+        $totalStockInAmount = $stockCard
+            ->where('in', '>', 0)
+            ->sum(function ($row) {
+                return (float) ($row['m']->amount ?? 0);
             });
 
-        $inventory = $inventoryQuery
-            ->join('products', 'inventories.product_id', '=', 'products.id')
-            ->select(
-                'inventories.*',
-                'products.product_name',
-                'products.category_id',
-                'products.api',
-                'products.base_oil',
-                'products.package_size',
-                'products.unit',
-                'products.unit_price',
-                'products.reorder_level'
-            )
-            ->orderBy('products.product_name')
-            ->get();
+        $totalStockOutAmount = $stockCard
+            ->where('out', '>', 0)
+            ->sum(function ($row) {
+                return (float) ($row['m']->amount ?? 0);
+            });
 
         /*
         |--------------------------------------------------------------------------
-        | Stock In Report
+        | LOW / OUT OF STOCK
         |--------------------------------------------------------------------------
         */
 
-        $stockInReportQuery = InventoryMovement::with([
-            'product.category',
-            'user',
-        ])
-            ->where('movement_type', 'stock_in')
-            ->orderByDesc('transaction_date')
-            ->orderByDesc('id');
-
-        if ($dateFrom) {
-            $stockInReportQuery->whereDate(
-                'transaction_date',
-                '>=',
-                $dateFrom
-            );
-        }
-
-        if ($dateTo) {
-            $stockInReportQuery->whereDate(
-                'transaction_date',
-                '<=',
-                $dateTo
-            );
-        }
-
-        $stockIns = $stockInReportQuery->get();
-
-        /*
-        |--------------------------------------------------------------------------
-        | Stock Out Report
-        |--------------------------------------------------------------------------
-        */
-
-        $stockOutReportQuery = InventoryMovement::with([
-            'product.category',
-            'user',
-        ])
-            ->where('movement_type', 'stock_out')
-            ->orderByDesc('transaction_date')
-            ->orderByDesc('id');
-
-        if ($dateFrom) {
-            $stockOutReportQuery->whereDate(
-                'transaction_date',
-                '>=',
-                $dateFrom
-            );
-        }
-
-        if ($dateTo) {
-            $stockOutReportQuery->whereDate(
-                'transaction_date',
-                '<=',
-                $dateTo
-            );
-        }
-
-        $stockOuts = $stockOutReportQuery->get();
-
-        /*
-        |--------------------------------------------------------------------------
-        | Low / Out of Stock Report
-        |--------------------------------------------------------------------------
-        */
-
-        $stockStatusReport = Inventory::with('product.category')
-            ->whereHas('product', function ($query) {
-                $query->where('status', 'active');
+        $stockStatusReport = $inventory
+            ->filter(function ($item) {
+                return $item['status'] !== 'In Stock';
             })
-            ->join('products', 'inventories.product_id', '=', 'products.id')
-            ->select(
-                'inventories.*',
-                'products.product_name',
-                'products.category_id',
-                'products.api',
-                'products.base_oil',
-                'products.package_size',
-                'products.unit',
-                'products.unit_price',
-                'products.reorder_level'
+            ->sortBy([
+                ['current_stock', 'asc'],
+                ['product_name', 'asc'],
+            ])
+            ->values();
+
+        $outOfStockCount = $inventory
+            ->where('status', 'Out of Stock')
+            ->count();
+
+        $lowStockCount = $inventory
+            ->where('status', 'Low Stock')
+            ->count();
+
+        /*
+        |--------------------------------------------------------------------------
+        | PURCHASE ORDERS
+        |--------------------------------------------------------------------------
+        */
+
+        $purchaseOrders = PurchaseOrder::with([
+                'supplier',
+                'items',
+            ])
+            ->when(
+                $dateFrom,
+                fn ($query) =>
+                    $query->whereDate(
+                        'po_date',
+                        '>=',
+                        $dateFrom
+                    )
             )
-            ->where(function ($query) {
-                $query->where('inventories.current_stock', '<=', 0)
-                    ->orWhereColumn(
-                        'inventories.current_stock',
+            ->when(
+                $dateTo,
+                fn ($query) =>
+                    $query->whereDate(
+                        'po_date',
                         '<=',
-                        'products.reorder_level'
-                    );
-            })
-            ->orderBy('inventories.current_stock')
-            ->orderBy('products.product_name')
+                        $dateTo
+                    )
+            )
+            ->orderByDesc('po_date')
+            ->orderByDesc('id')
             ->get();
 
         /*
         |--------------------------------------------------------------------------
-        | Purchase Order Report
+        | CUSTOMER ORDERS
         |--------------------------------------------------------------------------
         */
 
-        $purchaseOrderQuery = PurchaseOrder::with([
-            'supplier',
-        ])
-            ->orderByDesc('created_at');
-
-        if ($dateFrom) {
-            $purchaseOrderQuery->whereDate(
-                'created_at',
-                '>=',
-                $dateFrom
-            );
-        }
-
-        if ($dateTo) {
-            $purchaseOrderQuery->whereDate(
-                'created_at',
-                '<=',
-                $dateTo
-            );
-        }
-
-        $purchaseOrders = $purchaseOrderQuery->get();
+        $customerOrders = CustomerOrder::with([
+                'items',
+                'payments',
+            ])
+            ->when(
+                $dateFrom,
+                fn ($query) =>
+                    $query->whereDate(
+                        'order_date',
+                        '>=',
+                        $dateFrom
+                    )
+            )
+            ->when(
+                $dateTo,
+                fn ($query) =>
+                    $query->whereDate(
+                        'order_date',
+                        '<=',
+                        $dateTo
+                    )
+            )
+            ->orderByDesc('order_date')
+            ->orderByDesc('id')
+            ->get();
 
         /*
         |--------------------------------------------------------------------------
-        | Customer Order Report
+        | PRODUCT FILTER OPTIONS
+        |--------------------------------------------------------------------------
+        |
+        | Only active products are selectable for a new stock card.
+        | Archived/inactive products remain in the database and history.
+        |
+        */
+
+        $productOptions = Product::where('status', 'active')
+            ->orderBy('product_name')
+            ->get([
+                'id',
+                'product_name',
+                'brand',
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | SELECTED PRODUCT
         |--------------------------------------------------------------------------
         */
 
-        $customerOrderQuery = CustomerOrder::orderByDesc('created_at');
+        $selectedProduct = null;
 
-        if ($dateFrom) {
-            $customerOrderQuery->whereDate(
-                'created_at',
-                '>=',
-                $dateFrom
-            );
+        if ($productId) {
+
+            $selectedProduct = Product::with([
+                    'category',
+                    'inventory',
+                ])
+                ->where('status', 'active')
+                ->find($productId);
         }
-
-        if ($dateTo) {
-            $customerOrderQuery->whereDate(
-                'created_at',
-                '<=',
-                $dateTo
-            );
-        }
-
-        $customerOrders = $customerOrderQuery->get();
 
         /*
         |--------------------------------------------------------------------------
-        | Report Totals
-        |--------------------------------------------------------------------------
-        */
-
-        $reportTotals = [
-            'inventory_value' => $totalInventoryValue,
-            'stock_in_quantity' => $totalStockInQuantity,
-            'stock_in_amount' => $totalStockInAmount,
-            'stock_out_quantity' => $totalStockOutQuantity,
-            'stock_out_amount' => $totalStockOutAmount,
-            'low_stock' => $lowStockCount,
-            'out_of_stock' => $outOfStockCount,
-        ];
-
-        /*
-        |--------------------------------------------------------------------------
-        | Return Reports View
+        | RETURN VIEW
         |--------------------------------------------------------------------------
         */
 
         return view('owner.reports', compact(
             'dateFrom',
             'dateTo',
+            'productId',
+            'productOptions',
+            'selectedProduct',
+
             'totalProducts',
             'totalInventoryQuantity',
             'totalInventoryValue',
+
             'lowStockCount',
             'outOfStockCount',
+
             'totalStockInQuantity',
             'totalStockOutQuantity',
             'totalStockInAmount',
             'totalStockOutAmount',
+
             'inventory',
-            'stockIns',
-            'stockOuts',
+            'stockCard',
             'stockStatusReport',
+
             'purchaseOrders',
-            'customerOrders',
-            'reportTotals'
+            'customerOrders'
         ));
     }
 }

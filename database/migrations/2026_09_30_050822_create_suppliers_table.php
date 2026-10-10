@@ -13,11 +13,9 @@ return new class extends Migration
 
             $table->string('supplier_name');
 
-            $table->string('contact_person')
-                ->nullable();
+            $table->string('contact_person');
 
-            $table->string('contact_number')
-                ->nullable();
+            $table->string('contact_number');
 
             $table->string('email')
                 ->nullable();
@@ -25,6 +23,13 @@ return new class extends Migration
             $table->text('address')
                 ->nullable();
 
+            /*
+             * active   : available for new Purchase Orders
+             * inactive : hidden from the active list, restorable
+             * archived : hidden from the active list, restorable
+             *
+             * A supplier is never deleted. Historical POs keep it.
+             */
             $table->enum('status', [
                 'active',
                 'inactive',

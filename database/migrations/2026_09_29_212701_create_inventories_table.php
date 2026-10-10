@@ -11,11 +11,19 @@ return new class extends Migration
         Schema::create('inventories', function (Blueprint $table) {
             $table->id();
 
+            /*
+             * One inventory record per product.
+             */
             $table->foreignId('product_id')
                 ->unique()
                 ->constrained('products')
                 ->restrictOnDelete();
 
+            /*
+             * Physical/system stock currently on hand.
+             *
+             * Reserved stock is NOT deducted here.
+             */
             $table->integer('current_stock')
                 ->default(0);
 

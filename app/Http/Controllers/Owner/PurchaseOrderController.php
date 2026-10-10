@@ -23,6 +23,16 @@ class PurchaseOrderController extends Controller
 
     public function index()
     {
+        /*
+         * EXISTING PURCHASE ORDERS
+         *
+         * Always load the supplier relationship.
+         *
+         * This is important because a supplier may become inactive
+         * after an existing Purchase Order was created.
+         *
+         * Historical Purchase Orders must still show their supplier.
+         */
         $purchaseOrders = PurchaseOrder::with([
             'supplier',
             'customerOrder',
@@ -33,19 +43,42 @@ class PurchaseOrderController extends Controller
             ->latest('id')
             ->get();
 
-        $suppliers = Supplier::where('status', 'active')
+        /*
+         * NEW PURCHASE ORDERS
+         *
+         * Only active suppliers may be selected.
+         */
+        $suppliers = Supplier::query()
+            ->where('status', 'active')
             ->orderBy('supplier_name')
             ->get();
 
-        $products = Product::where('status', 'active')
-            ->with('inventory')
+        /*
+         * Only active products can be selected for NEW POs.
+         *
+         * Products remain available even if one of their suppliers
+         * becomes inactive.
+         *
+         * The supplier relationship is loaded only if the Product model
+         * already has the suppliers() many-to-many relationship.
+         */
+        $products = Product::query()
+            ->where('status', 'active')
+            ->with([
+                'inventory',
+                'category',
+            ])
             ->orderBy('product_name')
             ->get();
 
-        $customerOrders = CustomerOrder::whereIn('status', [
-            'for_purchasing',
-            'pending_inventory_check',
-        ])
+        /*
+         * Customer Orders that may require purchasing.
+         */
+        $customerOrders = CustomerOrder::query()
+            ->whereIn('status', [
+                'for_purchasing',
+                'pending_inventory_check',
+            ])
             ->orderByDesc('order_date')
             ->get();
 
@@ -60,18 +93,18 @@ class PurchaseOrderController extends Controller
 
     /*
     |--------------------------------------------------------------------------
-    | STORE
+    | SHARED VALIDATION RULES
     |--------------------------------------------------------------------------
     */
 
-    public function store(Request $request)
+    private function rules(array $supplierRule): array
     {
-        $validated = $request->validate([
-            'supplier_id' => [
-                'required',
-                'integer',
-                'exists:suppliers,id',
-            ],
+        return [
+
+            /*
+             * Supplier must be active for a NEW PO.
+             */
+            'supplier_id' => $supplierRule,
 
             'customer_order_id' => [
                 'nullable',
@@ -116,18 +149,59 @@ class PurchaseOrderController extends Controller
                 'min:1',
             ],
 
+            /*
+             * Purchase Unit Cost belongs to the PO item.
+             *
+             * It is NOT the Product Selling Price.
+             */
             'items.*.unit_cost' => [
                 'required',
                 'numeric',
                 'min:0',
             ],
-        ]);
+        ];
+    }
 
+
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATION MESSAGES
+    |--------------------------------------------------------------------------
+    */
+
+    private const MESSAGES = [
+        'supplier_id.exists' =>
+            'The selected supplier is inactive or does not exist. Please choose an active supplier.',
+    ];
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | STORE
+    |--------------------------------------------------------------------------
+    */
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate(
+            $this->rules([
+                'required',
+                'integer',
+
+                /*
+                 * NEW Purchase Orders may only use active suppliers.
+                 */
+                Rule::exists('suppliers', 'id')
+                    ->where('status', 'active'),
+            ]),
+            self::MESSAGES
+        );
 
         DB::transaction(function () use ($validated) {
 
             $purchaseOrder = PurchaseOrder::create([
-                'po_number' => 'TEMP-' . Str::uuid(),
+                'po_number' =>
+                    'TEMP-' . Str::uuid(),
 
                 'supplier_id' =>
                     $validated['supplier_id'],
@@ -152,7 +226,6 @@ class PurchaseOrderController extends Controller
             /*
              * Generate permanent PO number.
              */
-
             $purchaseOrder->update([
                 'po_number' => sprintf(
                     'PO-%d-%04d',
@@ -163,9 +236,8 @@ class PurchaseOrderController extends Controller
 
 
             /*
-             * Create Purchase Order Items.
+             * Create PO Items.
              */
-
             foreach ($validated['items'] as $item) {
 
                 $product = Product::findOrFail(
@@ -173,6 +245,9 @@ class PurchaseOrderController extends Controller
                 );
 
 
+                /*
+                 * Only active products may be added to NEW POs.
+                 */
                 if ($product->status !== 'active') {
 
                     abort(
@@ -229,6 +304,11 @@ class PurchaseOrderController extends Controller
 
     public function show(PurchaseOrder $purchaseOrder)
     {
+        /*
+         * Always load the supplier, including inactive suppliers.
+         *
+         * This preserves historical PO information.
+         */
         $purchaseOrder->load([
             'supplier',
             'customerOrder',
@@ -252,11 +332,16 @@ class PurchaseOrderController extends Controller
         Request $request,
         PurchaseOrder $purchaseOrder
     ) {
+
+        /*
+         * Only Draft or Pending POs can be edited.
+         */
         if (!in_array(
             $purchaseOrder->status,
             ['draft', 'pending'],
             true
         )) {
+
             return back()->withErrors([
                 'purchase_order' =>
                     'Only Draft or Pending Purchase Orders can be edited.',
@@ -264,62 +349,33 @@ class PurchaseOrderController extends Controller
         }
 
 
-        $validated = $request->validate([
-            'supplier_id' => [
+        $validated = $request->validate(
+            $this->rules([
                 'required',
                 'integer',
-                'exists:suppliers,id',
-            ],
 
-            'customer_order_id' => [
-                'nullable',
-                'integer',
-                'exists:customer_orders,id',
-            ],
+                /*
+                 * Normally only ACTIVE suppliers can be selected.
+                 *
+                 * However, if the PO already uses a supplier that
+                 * later became inactive, allow that existing supplier
+                 * to remain attached to this PO.
+                 *
+                 * This prevents an existing PO from being broken.
+                 */
+                Rule::exists('suppliers', 'id')
+                    ->where(function ($query) use ($purchaseOrder) {
 
-            'po_date' => [
-                'required',
-                'date',
-            ],
-
-            'status' => [
-                'required',
-                Rule::in([
-                    'draft',
-                    'pending',
-                ]),
-            ],
-
-            'notes' => [
-                'nullable',
-                'string',
-                'max:2000',
-            ],
-
-            'items' => [
-                'required',
-                'array',
-                'min:1',
-            ],
-
-            'items.*.product_id' => [
-                'required',
-                'integer',
-                'exists:products,id',
-            ],
-
-            'items.*.quantity' => [
-                'required',
-                'integer',
-                'min:1',
-            ],
-
-            'items.*.unit_cost' => [
-                'required',
-                'numeric',
-                'min:0',
-            ],
-        ]);
+                        $query
+                            ->where('status', 'active')
+                            ->orWhere(
+                                'id',
+                                $purchaseOrder->supplier_id
+                            );
+                    }),
+            ]),
+            self::MESSAGES
+        );
 
 
         DB::transaction(function () use (
@@ -345,6 +401,9 @@ class PurchaseOrderController extends Controller
             ]);
 
 
+            /*
+             * Rebuild PO items.
+             */
             $purchaseOrder->items()->delete();
 
 
@@ -355,6 +414,9 @@ class PurchaseOrderController extends Controller
                 );
 
 
+                /*
+                 * Inactive products cannot be added to a PO.
+                 */
                 if ($product->status !== 'active') {
 
                     abort(
@@ -367,6 +429,11 @@ class PurchaseOrderController extends Controller
                 $quantity = (int) $item['quantity'];
 
                 $unitCost = (float) $item['unit_cost'];
+
+                $subtotal = round(
+                    $quantity * $unitCost,
+                    2
+                );
 
 
                 PurchaseOrderItem::create([
@@ -383,10 +450,7 @@ class PurchaseOrderController extends Controller
                         $unitCost,
 
                     'subtotal' =>
-                        round(
-                            $quantity * $unitCost,
-                            2
-                        ),
+                        $subtotal,
                 ]);
             }
         });
@@ -399,6 +463,7 @@ class PurchaseOrderController extends Controller
                 'Purchase Order updated successfully.'
             );
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -416,9 +481,11 @@ class PurchaseOrderController extends Controller
             ]);
         }
 
+
         $purchaseOrder->update([
             'status' => 'pending',
         ]);
+
 
         return redirect()
             ->route('owner.purchase-orders')
@@ -427,6 +494,7 @@ class PurchaseOrderController extends Controller
                 'Purchase Order submitted for Owner approval successfully.'
             );
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -472,6 +540,7 @@ class PurchaseOrderController extends Controller
             ['received', 'partially_received'],
             true
         )) {
+
             return back()->withErrors([
                 'purchase_order' =>
                     'A Purchase Order that has already received goods cannot be cancelled.',

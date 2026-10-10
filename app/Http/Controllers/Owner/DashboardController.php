@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Owner;
 
 use App\Http\Controllers\Controller;
-use App\Models\InventoryMovement;
 use App\Models\Product;
 use App\Models\PurchaseOrder;
 
@@ -11,48 +10,193 @@ class DashboardController extends Controller
 {
     public function index()
     {
+        /*
+        |--------------------------------------------------------------------------
+        | Active Products
+        |--------------------------------------------------------------------------
+        */
+
         $products = Product::with('inventory')
             ->where('status', 'active')
+            ->orderBy('product_name')
             ->get();
 
-        $lowStockItems   = collect();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Stock Status
+        |--------------------------------------------------------------------------
+        */
+
+        $lowStockItems = collect();
         $outOfStockItems = collect();
-        $totalInventory  = 0;
+
+        $totalUnitsInStock = 0;
+
 
         foreach ($products as $product) {
-            $stock   = (int) ($product->inventory->current_stock ?? 0);
-            $reorder = (int) $product->reorder_level;
 
-            $product->current_stock = $stock;
-            $totalInventory += $stock;
+            $currentStock = (int) (
+                $product->inventory?->current_stock ?? 0
+            );
 
-            if ($stock <= 0) {
+            $reorderLevel = (int) (
+                $product->reorder_level ?? 0
+            );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Make current stock directly available to Blade
+            |--------------------------------------------------------------------------
+            */
+
+            $product->current_stock = $currentStock;
+
+
+            $totalUnitsInStock += $currentStock;
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Determine Stock Status
+            |--------------------------------------------------------------------------
+            */
+
+            if ($currentStock <= 0) {
+
                 $outOfStockItems->push($product);
-            } elseif ($stock <= $reorder) {
+
+            } elseif ($currentStock <= $reorderLevel) {
+
                 $lowStockItems->push($product);
+
             }
         }
 
-        // stock_out is stored as a negative number, so use abs()
-        $totalStockIn  = (int) InventoryMovement::where('movement_type', 'stock_in')->sum('quantity');
-        $totalStockOut = abs((int) InventoryMovement::where('movement_type', 'stock_out')->sum('quantity'));
 
-        $poStatusCounts = PurchaseOrder::selectRaw('status, COUNT(*) as total')
+        /*
+        |--------------------------------------------------------------------------
+        | Stock Status Counts
+        |--------------------------------------------------------------------------
+        */
+
+        $outOfStockCount = $outOfStockItems->count();
+
+        $lowStockCount = $lowStockItems->count();
+
+        $inStockCount = max(
+            0,
+            $products->count()
+                - $lowStockCount
+                - $outOfStockCount
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Purchase Order Status Counts
+        |--------------------------------------------------------------------------
+        */
+
+        $poStatusCounts = PurchaseOrder::selectRaw(
+            'status, COUNT(*) as total'
+        )
             ->groupBy('status')
             ->pluck('total', 'status');
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Open Purchase Orders
+        |--------------------------------------------------------------------------
+        |
+        | These are purchase orders that still require
+        | processing, follow-up, or completion.
+        |
+        */
+
+        $openPurchaseOrderStatuses = [
+            'draft',
+            'pending',
+            'confirmed',
+            'approved',
+            'purchasing',
+            'partial',
+        ];
+
+
+        $openPurchaseOrderCount = PurchaseOrder::whereIn(
+            'status',
+            $openPurchaseOrderStatuses
+        )->count();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Sort Low Stock Items
+        |--------------------------------------------------------------------------
+        |
+        | Products with the lowest stock appear first.
+        |
+        */
+
+        $lowStockItems = $lowStockItems
+            ->sortBy('current_stock')
+            ->values();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Sort Out of Stock Items
+        |--------------------------------------------------------------------------
+        */
+
+        $outOfStockItems = $outOfStockItems
+            ->sortBy('product_name')
+            ->values();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Open Purchase Orders
+        |--------------------------------------------------------------------------
+        */
+
+        $openPurchaseOrders = PurchaseOrder::with('supplier')
+            ->whereIn(
+                'status',
+                $openPurchaseOrderStatuses
+            )
+            ->latest()
+            ->get();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Dashboard View
+        |--------------------------------------------------------------------------
+        */
+
         return view('owner.dashboard', [
-            'totalProducts'        => $products->count(),
-            'totalInventory'       => $totalInventory,
-            'lowStockCount'        => $lowStockItems->count(),
-            'outOfStockCount'      => $outOfStockItems->count(),
-            'lowStockItems'        => $lowStockItems->take(5),
-            'outOfStockItems'      => $outOfStockItems->take(5),
-            'totalStockIn'         => $totalStockIn,
-            'totalStockOut'        => $totalStockOut,
-            'recentMovements'      => InventoryMovement::with('product')->latest()->take(5)->get(),
-            'recentPurchaseOrders' => PurchaseOrder::with('supplier')->latest()->take(5)->get(),
-            'poStatusCounts'       => $poStatusCounts,
+            'totalProducts' => $products->count(),
+            'totalUnitsInStock' => $totalUnitsInStock,
+
+            'inStockCount' => $inStockCount,
+            'lowStockCount' => $lowStockCount,
+            'outOfStockCount' => $outOfStockCount,
+
+            // IMPORTANT:
+            // Send the complete active product collection to the dashboard.
+            'products' => $products,
+
+            'lowStockItems' => $lowStockItems,
+            'outOfStockItems' => $outOfStockItems,
+
+            'openPurchaseOrderCount' => $openPurchaseOrderCount,
+            'openPurchaseOrders' => $openPurchaseOrders,
+
+            'poStatusCounts' => $poStatusCounts,
         ]);
     }
 }

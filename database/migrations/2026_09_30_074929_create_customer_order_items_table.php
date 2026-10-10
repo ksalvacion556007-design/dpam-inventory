@@ -19,22 +19,34 @@ return new class extends Migration
                 ->constrained('products')
                 ->restrictOnDelete();
 
+            /*
+             * Total quantity ordered.
+             */
             $table->integer('quantity');
 
             /*
-             * Quantity currently committed/reserved for this customer order.
+             * Quantity currently reserved for this order.
              *
-             * This does NOT reduce inventories.current_stock.
+             * Reservation does not reduce current_stock.
+             * It reduces AVAILABLE stock.
              */
-            $table->integer('reserved_quantity')->default(0);
+            $table->integer('reserved_quantity')
+                ->default(0);
 
             /*
-             * Quantity already physically delivered/released to the customer.
+             * Quantity already physically released/delivered.
              */
-            $table->integer('fulfilled_quantity')->default(0);
+            $table->integer('fulfilled_quantity')
+                ->default(0);
 
+            /*
+             * Selling price captured at the time of order.
+             */
             $table->decimal('unit_price', 12, 2);
 
+            /*
+             * quantity × unit_price
+             */
             $table->decimal('subtotal', 12, 2);
 
             $table->timestamps();

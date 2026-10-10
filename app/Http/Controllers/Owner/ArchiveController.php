@@ -15,6 +15,9 @@ class ArchiveController extends Controller
         |--------------------------------------------------------------------------
         | ARCHIVED PRODUCTS
         |--------------------------------------------------------------------------
+        |
+        | Products that are no longer active.
+        |
         */
 
         $archivedProducts = Product::with('category')
@@ -27,6 +30,9 @@ class ArchiveController extends Controller
         |--------------------------------------------------------------------------
         | ARCHIVED SUPPLIERS
         |--------------------------------------------------------------------------
+        |
+        | Suppliers that are no longer active.
+        |
         */
 
         $archivedSuppliers = Supplier::where('status', 'archived')
@@ -47,15 +53,15 @@ class ArchiveController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | RETURN ARCHIVE VIEW
+        | ARCHIVE VIEW
         |--------------------------------------------------------------------------
         */
 
-        return view('owner.archive', compact(
-            'archivedProducts',
-            'archivedSuppliers',
-            'archivedProductCount',
-            'archivedSupplierCount'
-        ));
+        return view('owner.archive', [
+            'archivedProducts' => $archivedProducts,
+            'archivedSuppliers' => $archivedSuppliers,
+            'archivedProductCount' => $archivedProductCount,
+            'archivedSupplierCount' => $archivedSupplierCount,
+        ]);
     }
 }

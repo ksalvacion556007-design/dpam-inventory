@@ -11,12 +11,17 @@ return new class extends Migration
         Schema::create('purchase_orders', function (Blueprint $table) {
             $table->id();
 
-            $table->string('po_number')->unique();
+            $table->string('po_number')
+                ->unique();
 
             $table->foreignId('supplier_id')
                 ->constrained('suppliers')
                 ->restrictOnDelete();
 
+            /*
+             * Optional link to the customer order that caused
+             * purchasing to be necessary.
+             */
             $table->foreignId('customer_order_id')
                 ->nullable()
                 ->constrained('customer_orders')
@@ -24,6 +29,25 @@ return new class extends Migration
 
             $table->date('po_date');
 
+            /*
+             * draft:
+             *     PO being prepared.
+             *
+             * pending:
+             *     Waiting for approval/submission.
+             *
+             * approved:
+             *     Approved and waiting for supplier delivery.
+             *
+             * partially_received:
+             *     Some goods have been received.
+             *
+             * received:
+             *     All ordered goods have been received.
+             *
+             * cancelled:
+             *     PO cancelled.
+             */
             $table->enum('status', [
                 'draft',
                 'pending',
@@ -33,7 +57,8 @@ return new class extends Migration
                 'received',
             ])->default('draft');
 
-            $table->text('notes')->nullable();
+            $table->text('notes')
+                ->nullable();
 
             $table->foreignId('user_id')
                 ->nullable()

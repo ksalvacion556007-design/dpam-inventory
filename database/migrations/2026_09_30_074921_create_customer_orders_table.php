@@ -20,37 +20,23 @@ return new class extends Migration
             $table->date('order_date');
 
             /*
-             * Customer order workflow:
-             *
              * pending_inventory_check
+             *     Waiting for inventory checking.
+             *
              * confirmed
+             *     Stock is reserved for the order.
+             *
              * partially_fulfilled
+             *     Some quantity has already been released.
+             *
              * fulfilled
+             *     Everything has been released.
+             *
              * for_purchasing
+             *     Available stock is insufficient.
+             *
              * cancelled
-             *
-             * pending_inventory_check:
-             * Order has been recorded and is waiting for
-             * the Secretary to check inventory availability.
-             *
-             * confirmed:
-             * Secretary confirmed sufficient availability
-             * and the Owner confirmed the customer order.
-             *
-             * partially_fulfilled:
-             * Some requested quantity has already been
-             * physically released through Stock Out.
-             *
-             * fulfilled:
-             * All requested quantities have been physically
-             * released through Stock Out.
-             *
-             * for_purchasing:
-             * Available inventory is insufficient and the
-             * Owner decides that purchasing is required.
-             *
-             * cancelled:
-             * The customer order will not proceed.
+             *     Order was cancelled or voided.
              */
             $table->enum('status', [
                 'pending_inventory_check',
@@ -62,7 +48,7 @@ return new class extends Migration
             ])->default('pending_inventory_check');
 
             /*
-             * Result of the Secretary inventory check.
+             * Inventory checking result.
              */
             $table->enum('inventory_check_status', [
                 'pending',
@@ -70,28 +56,19 @@ return new class extends Migration
                 'insufficient',
             ])->default('pending');
 
-            /*
-             * Secretary who performed the inventory check.
-             */
             $table->foreignId('inventory_checked_by')
                 ->nullable()
                 ->constrained('users')
                 ->nullOnDelete();
 
-            /*
-             * Date and time when the inventory was checked.
-             */
             $table->timestamp('inventory_checked_at')
                 ->nullable();
 
-            /*
-             * Notes recorded during the inventory check.
-             */
             $table->text('inventory_check_notes')
                 ->nullable();
 
             /*
-             * Owner's decision after the inventory check.
+             * Owner's decision for open orders.
              */
             $table->enum('owner_decision', [
                 'confirmed',
@@ -99,18 +76,41 @@ return new class extends Migration
                 'cancelled',
             ])->nullable();
 
-            /*
-             * Additional customer order notes.
-             */
             $table->text('notes')->nullable();
 
             /*
-             * User who created the customer order.
+             * User who created/recorded the order.
              */
             $table->foreignId('user_id')
                 ->nullable()
                 ->constrained('users')
                 ->nullOnDelete();
+
+            /*
+             * Prevent duplicate checkout submissions.
+             *
+             * The same checkout token can only create one order.
+             */
+            $table->string('checkout_token', 100)
+                ->nullable()
+                ->unique();
+
+            /*
+             * Whole-order void information.
+             *
+             * Voiding does not delete the order.
+             * It records the reversal.
+             */
+            $table->timestamp('voided_at')
+                ->nullable();
+
+            $table->foreignId('voided_by')
+                ->nullable()
+                ->constrained('users')
+                ->nullOnDelete();
+
+            $table->text('void_reason')
+                ->nullable();
 
             $table->timestamps();
         });

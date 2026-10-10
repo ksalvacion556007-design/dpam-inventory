@@ -74,6 +74,9 @@
         .btn-danger:hover { background:#b91c1c; }
         .btn-ghost { background:#e2e8f0; color:#334155; }
         .btn-ghost:hover { background:#cbd5e1; }
+        .btn-warning { background:#f59e0b; color:#fff; }
+        .btn-warning:hover { background:#d97706; }
+        .btn-sm { padding:6px 12px; font-size:12px; }
 
         /* MODAL + FORM */
         .modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); align-items:center; justify-content:center; padding:20px; z-index:1000; }
@@ -87,10 +90,12 @@
         .form-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
         .form-group.full { grid-column:1 / -1; }
         .form-group label { display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:6px; }
+        .form-group small { display:block; margin-top:5px; font-size:11px; color:var(--muted); }
         .req { color:var(--danger); margin-left:2px; }
         .form-control { width:100%; height:42px; border:1px solid #cbd5e1; border-radius:8px; padding:0 12px; background:#fff; font-size:13px; color:var(--ink); }
         textarea.form-control { height:auto; min-height:90px; padding:10px 12px; resize:vertical; }
         .form-control:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+        .form-control[readonly] { background:#f8fafc; }
         .form-actions { margin-top:22px; display:flex; justify-content:flex-end; gap:10px; }
 
         /* RESPONSIVE */
@@ -211,6 +216,7 @@
                             <th class="text-right">Current Stock</th>
                             <th class="text-right">Reorder Level</th>
                             <th>Stock Status</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
 
@@ -240,11 +246,30 @@
                                 <td class="text-right strong">{{ number_format($currentStock) }}</td>
                                 <td class="text-right">{{ number_format($reorderLevel) }}</td>
                                 <td><span class="pill {{ $statusClass }}">{{ $status }}</span></td>
+                                <td>
+                                    @if($currentStock <= $reorderLevel)
+                                        @if(in_array($product->id, $pendingRequestProductIds ?? [], true))
+                                            <span class="pill pill-gray">Request Pending</span>
+                                        @else
+                                            <button type="button"
+                                                    class="btn btn-warning btn-sm"
+                                                    data-product-id="{{ $product->id }}"
+                                                    data-product-name="{{ $product->product_name }}"
+                                                    data-current-stock="{{ $currentStock }}"
+                                                    data-reorder-level="{{ $reorderLevel }}"
+                                                    onclick="openPurchaseRequestModal(this)">
+                                                Request Purchase
+                                            </button>
+                                        @endif
+                                    @else
+                                        —
+                                    @endif
+                                </td>
                             </tr>
 
                         @empty
 
-                            <tr><td colspan="6" class="empty-state">No active products found.</td></tr>
+                            <tr><td colspan="7" class="empty-state">No active products found.</td></tr>
 
                         @endforelse
                     </tbody>
@@ -337,9 +362,7 @@
                 class="close-button"
                 onclick="closeModal('stockInModal')"
                 aria-label="Close"
-                &times;
-            >
-            </button>
+            >&times;</button>
         </div>
 
         <div class="modal-body">
@@ -711,6 +734,72 @@
                 <div class="form-actions">
                     <button type="button" class="btn btn-ghost" onclick="closeModal('adjustModal')">Cancel</button>
                     <button type="submit" class="btn btn-primary">Record Adjustment</button>
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+</div>
+
+
+{{-- PURCHASE REQUEST MODAL --}}
+<div class="modal" id="purchaseRequestModal">
+    <div class="modal-box">
+
+        <div class="modal-header">
+            <h2>Purchase Request</h2>
+            <button type="button" class="close-button" onclick="closeModal('purchaseRequestModal')" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+
+            <form action="{{ route('secretary.inventory.purchase-request') }}" method="POST">
+
+                @csrf
+
+                <input type="hidden" name="product_id" id="prProductId">
+
+                <div class="form-grid">
+
+                    <div class="form-group full">
+                        <label>Product</label>
+                        <input type="text" id="prProductName" class="form-control" readonly>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Current Stock</label>
+                        <input type="text" id="prCurrentStock" class="form-control" readonly>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Reorder Level</label>
+                        <input type="text" id="prReorderLevel" class="form-control" readonly>
+                    </div>
+
+                    <div class="form-group full">
+                        <label>Requested Quantity <span class="req">*</span></label>
+                        <input type="number" name="requested_quantity" id="prRequestedQuantity" class="form-control" min="1" step="1" placeholder="Enter quantity to request" required>
+                        <small>Suggested quantity is filled in automatically; you can change it.</small>
+                    </div>
+
+                    <div class="form-group full">
+                        <label>Reason <span class="req">*</span></label>
+                        <input type="text" name="reason" id="prReason" class="form-control" maxlength="255" placeholder="Example: Out of stock / Below reorder level" required>
+                    </div>
+
+                    <div class="form-group full">
+                        <label>Notes</label>
+                        <textarea name="notes" class="form-control" maxlength="1000" placeholder="Additional notes for the Owner (optional)"></textarea>
+                        <small>This only sends a request to the Owner. It does not create a Purchase Order or change inventory.</small>
+                    </div>
+
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-ghost" onclick="closeModal('purchaseRequestModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Submit Request</button>
                 </div>
 
             </form>
@@ -1151,6 +1240,35 @@
             unitCostInput.value = '';
         }
     }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | PURCHASE REQUEST MODAL
+    |--------------------------------------------------------------------------
+    */
+
+    function openPurchaseRequestModal(button)
+    {
+        const currentStock = Number(button.dataset.currentStock || 0);
+        const reorderLevel = Number(button.dataset.reorderLevel || 0);
+
+        document.getElementById('prProductId').value = button.dataset.productId;
+        document.getElementById('prProductName').value = button.dataset.productName;
+        document.getElementById('prCurrentStock').value = currentStock.toLocaleString();
+        document.getElementById('prReorderLevel').value = reorderLevel.toLocaleString();
+
+        /* Suggested quantity: enough to get back above the reorder level. */
+        document.getElementById('prRequestedQuantity').value = Math.max(1, (reorderLevel * 2) - currentStock);
+
+        document.getElementById('prReason').value =
+            currentStock <= 0
+                ? 'Out of stock'
+                : 'Below reorder level';
+
+        openModal('purchaseRequestModal');
+    }
+
 
     function openModal(id)
     {

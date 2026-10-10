@@ -24,7 +24,10 @@ class PaymentSeeder extends Seeder
                 'method' => 'cash',
                 'amount' => 7000,
                 'status' => 'paid',
+                'reference' => null,
+                'notes' => 'Cash payment.',
             ],
+
             [
                 'order' => 'CO-2026-0002',
                 'receipt' => 'OR-2026-0002',
@@ -32,7 +35,10 @@ class PaymentSeeder extends Seeder
                 'method' => 'credit',
                 'amount' => 11400,
                 'status' => 'unpaid',
+                'reference' => null,
+                'notes' => 'Credit transaction / unpaid receipt.',
             ],
+
             [
                 'order' => 'CO-2026-0003',
                 'receipt' => 'OR-2026-0003',
@@ -40,7 +46,10 @@ class PaymentSeeder extends Seeder
                 'method' => 'gcash',
                 'amount' => 5400,
                 'status' => 'paid',
+                'reference' => 'GCASH-20260909-0003',
+                'notes' => 'GCash payment.',
             ],
+
             [
                 'order' => 'CO-2026-0004',
                 'receipt' => 'OR-2026-0004',
@@ -48,6 +57,8 @@ class PaymentSeeder extends Seeder
                 'method' => 'bank_transfer',
                 'amount' => 10750,
                 'status' => 'paid',
+                'reference' => 'BANK-20260918-0004',
+                'notes' => 'Bank transfer payment.',
             ],
         ];
 
@@ -60,14 +71,12 @@ class PaymentSeeder extends Seeder
                 'payment_method' => $payment['method'],
                 'amount' => $payment['amount'],
                 'status' => $payment['status'],
-                'reference_number' => null,
+                'reference_number' => $payment['reference'],
                 'check_number' => null,
                 'bank_name' => null,
                 'check_date' => null,
                 'maturity_date' => null,
-                'notes' => $payment['method'] === 'credit'
-                    ? 'Credit transaction / unpaid receipt.'
-                    : null,
+                'notes' => $payment['notes'],
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
